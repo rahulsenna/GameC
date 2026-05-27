@@ -1,5 +1,6 @@
 #include "game.h"
 #include "math_utils.h"
+#include "shapes.h"
 #include <math.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -101,7 +102,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     // Load texture
     int width, height, channels;
     stbi_set_flip_vertically_on_load(true);
-    unsigned char *data = stbi_load("assets/wall.jpg", &width, &height,
+    unsigned char *data = stbi_load("assets/CustomUVChecker_byValle_1K.png", &width, &height,
                                     &channels, 4); // Force RGBA
     if (data)
     {
@@ -109,6 +110,17 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
                                width, height, data);
       stbi_image_free(data);
     }
+    
+    // Generate Shapes
+    state->shapes[0] = CreateSphere(arena);
+    state->shapes[1] = CreateTorus(arena);
+    state->shapes[2] = CreateCylinder(arena);
+    state->shapes[3] = CreateCone(arena);
+    state->shapes[4] = CreateCube(arena);
+    state->shapes[5] = CreateCuboid(arena, 1.5f, 0.5f, 1.0f);
+    state->shapes[6] = CreateTriangularPyramid(arena);
+    state->shapes[7] = CreateSquarePyramid(arena);
+    state->shapes[8] = CreateTriangularPrism(arena);
   }
 
   float dt = 0.016f;
@@ -156,58 +168,6 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   // --- Render ---
   PushClearCommand(&out_output->render_group, 0.1f, 0.1f, 0.1f, 1.0f);
 
-  Vertex cube_vertices[] = {// Front Face (Normal 0, 0, 1)
-                            {{-0.5, -0.5, 0.5}, {0, 0, 1}, {0.0, 0.0}},
-                            {{0.5, -0.5, 0.5}, {0, 0, 1}, {1.0, 0.0}},
-                            {{-0.5, 0.5, 0.5}, {0, 0, 1}, {0.0, 1.0}},
-                            {{0.5, -0.5, 0.5}, {0, 0, 1}, {1.0, 0.0}},
-                            {{0.5, 0.5, 0.5}, {0, 0, 1}, {1.0, 1.0}},
-                            {{-0.5, 0.5, 0.5}, {0, 0, 1}, {0.0, 1.0}},
-
-                            // Back Face (Normal 0, 0, -1)
-                            {{0.5, -0.5, -0.5}, {0, 0, -1}, {0.0, 0.0}},
-                            {{-0.5, -0.5, -0.5}, {0, 0, -1}, {1.0, 0.0}},
-                            {{0.5, 0.5, -0.5}, {0, 0, -1}, {0.0, 1.0}},
-                            {{-0.5, -0.5, -0.5}, {0, 0, -1}, {1.0, 0.0}},
-                            {{-0.5, 0.5, -0.5}, {0, 0, -1}, {1.0, 1.0}},
-                            {{0.5, 0.5, -0.5}, {0, 0, -1}, {0.0, 1.0}},
-
-                            // Top Face (Normal 0, 1, 0)
-                            {{-0.5, 0.5, 0.5}, {0, 1, 0}, {0.0, 0.0}},
-                            {{0.5, 0.5, 0.5}, {0, 1, 0}, {1.0, 0.0}},
-                            {{-0.5, 0.5, -0.5}, {0, 1, 0}, {0.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {0, 1, 0}, {1.0, 0.0}},
-                            {{0.5, 0.5, -0.5}, {0, 1, 0}, {1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0, 1, 0}, {0.0, 1.0}},
-
-                            // Bottom Face (Normal 0, -1, 0)
-                            {{-0.5, -0.5, -0.5}, {0, -1, 0}, {0.0, 0.0}},
-                            {{0.5, -0.5, -0.5}, {0, -1, 0}, {1.0, 0.0}},
-                            {{-0.5, -0.5, 0.5}, {0, -1, 0}, {0.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {0, -1, 0}, {1.0, 0.0}},
-                            {{0.5, -0.5, 0.5}, {0, -1, 0}, {1.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {0, -1, 0}, {0.0, 1.0}},
-
-                            // Right Face (Normal 1, 0, 0)
-                            {{0.5, -0.5, 0.5}, {1, 0, 0}, {0.0, 0.0}},
-                            {{0.5, -0.5, -0.5}, {1, 0, 0}, {1.0, 0.0}},
-                            {{0.5, 0.5, 0.5}, {1, 0, 0}, {0.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {1, 0, 0}, {1.0, 0.0}},
-                            {{0.5, 0.5, -0.5}, {1, 0, 0}, {1.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {1, 0, 0}, {0.0, 1.0}},
-
-                            // Left Face (Normal -1, 0, 0)
-                            {{-0.5, -0.5, -0.5}, {-1, 0, 0}, {0.0, 0.0}},
-                            {{-0.5, -0.5, 0.5}, {-1, 0, 0}, {1.0, 0.0}},
-                            {{-0.5, 0.5, -0.5}, {-1, 0, 0}, {0.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {-1, 0, 0}, {1.0, 0.0}},
-                            {{-0.5, 0.5, 0.5}, {-1, 0, 0}, {1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {-1, 0, 0}, {0.0, 1.0}}};
-
-  simd_float4x4 model_matrix =
-      simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                  simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 0, 0, 1));
-
   simd_float4x4 view_matrix = math_make_look_at(
       state->camera.position, state->camera.position + front, up);
 
@@ -216,15 +176,34 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   simd_float4x4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
 
   simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
-  simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-  Uniforms uniforms = {};
-  uniforms.mvp_matrix = mvp_matrix;
-  uniforms.model_matrix = model_matrix;
-  uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
-  uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-  uniforms.ambient_intensity = 0.2f;
+  for (int i = 0; i < 9; ++i)
+  {
+      float x = (i % 3) * 2.5f - 2.5f;
+      float z = (i / 3) * 2.5f - 2.5f;
+      simd_float4x4 trans_matrix =
+          simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+                      simd_make_float4(0, 0, 1, 0), simd_make_float4(x, 0, z, 1));
 
-  PushDrawMeshCommand(&out_output->render_group, uniforms,
-                      state->texture_handle, 36, cube_vertices);
+      float angle = state->time * 0.5f + i;
+      simd_float4x4 rot_y = simd_matrix(
+          simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
+          simd_make_float4(0, 1, 0, 0),
+          simd_make_float4(sinf(angle), 0, cosf(angle), 0),
+          simd_make_float4(0, 0, 0, 1)
+      );
+      
+      simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
+      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+      Uniforms uniforms = {};
+      uniforms.mvp_matrix = mvp_matrix;
+      uniforms.model_matrix = model_matrix;
+      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
+      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+      uniforms.ambient_intensity = 0.2f;
+
+      PushDrawMeshCommand(&out_output->render_group, uniforms,
+                          state->texture_handle, state->shapes[i].vertex_count, state->shapes[i].vertices);
+  }
 }

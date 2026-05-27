@@ -21,12 +21,26 @@ struct Camera
   float yaw;
 };
 
+struct Vertex
+{
+  simd_float3 position;
+  simd_float3 normal;
+  simd_float2 tex_coord;
+};
+
+struct MeshData
+{
+  U32 vertex_count;
+  Vertex *vertices;
+};
+
 struct GameState
 {
   B32 is_initialized;
   F32 time;
   U32 texture_handle;
   Camera camera;
+  MeshData shapes[9];
 };
 
 // -- Render Command Structures --
@@ -56,12 +70,7 @@ struct RenderGroupEntry_UploadTexture
   // Raw pixel data (RGBA, 8 bits per channel) immediately follows this struct
 };
 
-struct Vertex
-{
-  simd_float3 position;
-  simd_float3 normal;
-  simd_float2 tex_coord;
-};
+// Removed duplicate Vertex struct from here
 
 struct Uniforms
 {

@@ -209,11 +209,11 @@ static void RenderFrame()
     UpdateDepthTexture(
         CGSizeMake(drawable.texture.width, drawable.texture.height));
 
-    U8 render_buffer[1024 * 1024 * 2];
+    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 16);
     GameOutput output = {};
     output.render_group.base = render_buffer;
     output.render_group.size = 0;
-    output.render_group.max_size = sizeof(render_buffer);
+    output.render_group.max_size = 1024 * 1024 * 16;
 
     // Run game logic with input
     if (global_game_code.UpdateAndRender) {
@@ -331,9 +331,10 @@ static void RenderFrame()
         [commandEncoder setFragmentBytes:&entry->uniforms
                                   length:sizeof(Uniforms)
                                  atIndex:1];
-        [commandEncoder setVertexBytes:vertices
-                                length:sizeof(Vertex) * entry->vertex_count
-                               atIndex:0];
+        id<MTLBuffer> vertexBuffer = [global_device newBufferWithBytes:vertices
+                                                                length:sizeof(Vertex) * entry->vertex_count
+                                                               options:MTLResourceStorageModeShared];
+        [commandEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
         [commandEncoder drawPrimitives:MTLPrimitiveTypeTriangle
                            vertexStart:0
                            vertexCount:entry->vertex_count];
