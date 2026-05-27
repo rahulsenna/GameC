@@ -34,13 +34,27 @@ struct MeshData
   Vertex *vertices;
 };
 
+struct FBXNode
+{
+  U32 vertex_count;
+  Vertex *vertices;
+  U32 texture_handle;
+};
+
+struct FBXModel
+{
+  U32 num_nodes;
+  FBXNode nodes[32]; // Support up to 32 sub-meshes
+};
+
 struct GameState
 {
   B32 is_initialized;
   F32 time;
   U32 texture_handle;
   Camera camera;
-  MeshData shapes[10];
+  MeshData shapes[10]; // Back to 10 for procedurals
+  FBXModel fbx_model;
 };
 
 // -- Render Command Structures --

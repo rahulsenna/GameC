@@ -48,7 +48,7 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
                               texture2d<float> colorTexture [[texture(0)]],
                               constant Uniforms &uniforms [[buffer(1)]])
 {
-  constexpr sampler textureSampler (mag_filter::linear, min_filter::linear);
+  constexpr sampler textureSampler (mag_filter::linear, min_filter::linear, s_address::repeat, t_address::repeat);
   float4 base_color = colorTexture.sample(textureSampler, in.tex_coord);
   
   // Directional Lighting from Uniforms

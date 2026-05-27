@@ -31,6 +31,9 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
   U32 pixel_data_size = width * height * 4;
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_UploadTexture) + pixel_data_size;
+  if (group->size + total_size > group->max_size) {
+      printf("ASSERT FAILURE: size=%u, total_size=%u, max_size=%u, w=%u, h=%u\n", group->size, total_size, group->max_size, width, height);
+  }
   Assert(group->size + total_size <= group->max_size);
 
   RenderGroupEntryHeader *header =
@@ -123,6 +126,9 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->shapes[7] = CreateSquarePyramid(arena);
     state->shapes[8] = CreateTriangularPrism(arena);
     state->shapes[9] = CreatePlane(arena, 1000.0f);
+    
+    U32 next_tex_handle = 100;
+    state->fbx_model = LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group, &next_tex_handle);
   }
 
   float dt = 0.016f;
@@ -244,5 +250,50 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
       PushDrawMeshCommand(&out_output->render_group, uniforms,
                           state->texture_handle, 0, state->shapes[i].vertex_count, state->shapes[i].vertices);
+  }
+
+  // 3. Draw FBX Model in front of the shapes (closer to camera)
+  {
+      simd_float4x4 trans_matrix =
+          simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+                      simd_make_float4(0, 0, 1, 0), simd_make_float4(0, -0.5f, -2.5f, 1));
+      
+      simd_float4x4 rot_y = simd_matrix(
+          simd_make_float4(1, 0, 0, 0),
+          simd_make_float4(0, 1, 0, 0),
+          simd_make_float4(0, 0, 1, 0),
+          simd_make_float4(0, 0, 0, 1)
+      );
+
+      // Scale it down (often FBX files are in cm)
+      float s = 0.01f;
+      simd_float4x4 scale_matrix = simd_matrix(
+          simd_make_float4(s, 0, 0, 0),
+          simd_make_float4(0, s, 0, 0),
+          simd_make_float4(0, 0, s, 0),
+          simd_make_float4(0, 0, 0, 1)
+      );
+
+      simd_float4x4 rot_scale = simd_mul(rot_y, scale_matrix);
+      simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_scale);
+      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+      Uniforms uniforms = {};
+      uniforms.mvp_matrix = mvp_matrix;
+      uniforms.model_matrix = model_matrix;
+      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
+      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+      uniforms.camera_pos = state->camera.position;
+      uniforms.ambient_intensity = 0.2f;
+
+      for (U32 n = 0; n < state->fbx_model.num_nodes; n++)
+      {
+          FBXNode *node = &state->fbx_model.nodes[n];
+          if (node->vertex_count > 0)
+          {
+              PushDrawMeshCommand(&out_output->render_group, uniforms,
+                                  node->texture_handle, 0, node->vertex_count, node->vertices);
+          }
+      }
   }
 }

@@ -235,11 +235,11 @@ static void RenderFrame()
     UpdateDepthTexture(
         CGSizeMake(drawable.texture.width, drawable.texture.height));
 
-    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 16);
+    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 256);
     GameOutput output = {};
     output.render_group.base = render_buffer;
     output.render_group.size = 0;
-    output.render_group.max_size = 1024 * 1024 * 16;
+    output.render_group.max_size = 1024 * 1024 * 256;
 
     // Run game logic with input
     if (global_game_code.UpdateAndRender) {

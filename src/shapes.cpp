@@ -1,5 +1,10 @@
 #include "shapes.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "ufbx.h"
+#include "stb_image.h"
 
 static void AddVertex(Vertex *vertices, U32 &index, float px, float py, float pz, float nx, float ny, float nz, float u, float v)
 {
@@ -424,3 +429,117 @@ MeshData CreatePlane(Arena *arena, float size)
 
     return mesh;
 }
+
+FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group, U32 *next_texture_handle)
+{
+    FBXModel model = {};
+    model.num_nodes = 0;
+    
+    ufbx_load_opts opts = {};
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+
+    ufbx_error error;
+    ufbx_scene *scene = ufbx_load_file(filepath, &opts, &error);
+    
+    if (!scene) {
+        printf("Failed to load FBX: %s\n", error.description.data);
+        return model;
+    }
+
+    struct LoadedTex {
+        const void *data;
+        U32 handle;
+    };
+    LoadedTex loaded_tex[32] = {};
+    U32 num_loaded_tex = 0;
+
+    for (size_t mesh_i = 0; mesh_i < scene->meshes.count; mesh_i++) {
+        if (model.num_nodes >= 32) break;
+        
+        ufbx_mesh *ufbx_m = scene->meshes.data[mesh_i];
+        if (!ufbx_m) continue;
+
+        FBXNode node = {};
+        
+        // --- 1. Find Texture ---
+        node.texture_handle = 1; // Default to checkerboard
+        
+        if (ufbx_m->materials.count > 0) {
+            ufbx_material *mat = ufbx_m->materials.data[0];
+            for (size_t tex_i = 0; tex_i < mat->textures.count; tex_i++) {
+                ufbx_material_texture mat_tex = mat->textures.data[tex_i];
+                if (strcmp(mat_tex.material_prop.data, "DiffuseColor") == 0 ||
+                    strcmp(mat_tex.material_prop.data, "base_color") == 0) {
+                    
+                    ufbx_texture *tex = mat_tex.texture;
+                    if (tex && tex->type == UFBX_TEXTURE_FILE && tex->content.data) {
+                        
+                        U32 cached_handle = 0;
+                        for (U32 t = 0; t < num_loaded_tex; t++) {
+                            if (loaded_tex[t].data == tex->content.data) {
+                                cached_handle = loaded_tex[t].handle;
+                                break;
+                            }
+                        }
+                        
+                        if (cached_handle != 0) {
+                            node.texture_handle = cached_handle;
+                        } else {
+                            int width, height, channels;
+                            unsigned char *pixels = stbi_load_from_memory(
+                                (const stbi_uc*)tex->content.data, 
+                                (int)tex->content.size, 
+                                &width, &height, &channels, 4);
+                                
+                            if (pixels) {
+                                node.texture_handle = (*next_texture_handle)++;
+                                PushUploadTextureCommand(render_group, node.texture_handle, width, height, pixels);
+                                stbi_image_free(pixels);
+                                
+                                loaded_tex[num_loaded_tex].data = tex->content.data;
+                                loaded_tex[num_loaded_tex].handle = node.texture_handle;
+                                num_loaded_tex++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // --- 2. Extract Geometry ---
+        size_t max_tris = 0;
+        for (size_t i = 0; i < ufbx_m->faces.count; i++) {
+            max_tris += ufbx_m->max_face_triangles;
+        }
+
+        node.vertices = PushArray(arena, Vertex, max_tris * 3);
+        U32 idx = 0;
+        uint32_t *tri_indices = (uint32_t *)malloc(ufbx_m->max_face_triangles * 3 * sizeof(uint32_t));
+
+        for (size_t fi = 0; fi < ufbx_m->faces.count; fi++) {
+            ufbx_face face = ufbx_m->faces.data[fi];
+            if (face.num_indices < 3) continue;
+
+            uint32_t num_tris = ufbx_triangulate_face(tri_indices, ufbx_m->max_face_triangles * 3, ufbx_m, face);
+
+            for (uint32_t i = 0; i < num_tris * 3; i++) {
+                uint32_t v_idx = tri_indices[i];
+                
+                ufbx_vec3 pos = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, v_idx);
+                ufbx_vec3 norm = ufbx_get_vertex_vec3(&ufbx_m->vertex_normal, v_idx);
+                ufbx_vec2 uv = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, v_idx);
+
+                AddVertex(node.vertices, idx, pos.x, pos.y, pos.z, norm.x, norm.y, norm.z, uv.x, uv.y);
+            }
+        }
+        free(tri_indices);
+        node.vertex_count = idx;
+        
+        model.nodes[model.num_nodes++] = node;
+    }
+
+    ufbx_free_scene(scene);
+    return model;
+}
+
