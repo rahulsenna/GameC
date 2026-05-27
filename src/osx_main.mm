@@ -10,7 +10,9 @@ static id<MTLRenderPipelineState> global_pipeline_state = nil;
 static id<MTLDepthStencilState> global_depth_state = nil;
 static id<MTLTexture> global_depth_texture = nil;
 static CAMetalLayer *global_metal_layer = nil;
+static NSMutableDictionary<NSNumber *, id<MTLTexture>> *global_textures = nil;
 static bool global_running = true;
+static GameInput global_input = {};
 
 // Window Delegate
 @interface MainWindowDelegate : NSObject <NSWindowDelegate>
@@ -34,6 +36,50 @@ static bool global_running = true;
   layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
   global_metal_layer = layer;
   return layer;
+}
+- (BOOL)acceptsFirstResponder
+{
+  return YES;
+}
+- (void)keyDown:(NSEvent *)event
+{
+  unsigned short key = [event keyCode];
+  if (key == 13)
+    global_input.key_w = 1;
+  if (key == 0)
+    global_input.key_a = 1;
+  if (key == 1)
+    global_input.key_s = 1;
+  if (key == 2)
+    global_input.key_d = 1;
+  if (key == 126)
+    global_input.key_up = 1;
+  if (key == 125)
+    global_input.key_down = 1;
+  if (key == 123)
+    global_input.key_left = 1;
+  if (key == 124)
+    global_input.key_right = 1;
+}
+- (void)keyUp:(NSEvent *)event
+{
+  unsigned short key = [event keyCode];
+  if (key == 13)
+    global_input.key_w = 0;
+  if (key == 0)
+    global_input.key_a = 0;
+  if (key == 1)
+    global_input.key_s = 0;
+  if (key == 2)
+    global_input.key_d = 0;
+  if (key == 126)
+    global_input.key_up = 0;
+  if (key == 125)
+    global_input.key_down = 0;
+  if (key == 123)
+    global_input.key_left = 0;
+  if (key == 124)
+    global_input.key_right = 0;
 }
 @end
 
@@ -66,20 +112,20 @@ static void RenderFrame()
     UpdateDepthTexture(
         CGSizeMake(drawable.texture.width, drawable.texture.height));
 
-    U8 render_buffer[1024 * 512]; // Increased buffer size for 3D meshes
+    U8 render_buffer[1024 * 1024 * 2];
     GameOutput output = {};
     output.render_group.base = render_buffer;
     output.render_group.size = 0;
     output.render_group.max_size = sizeof(render_buffer);
 
-    // Run game logic
-    GameUpdateAndRender(global_arena, &output);
+    // Run game logic with input
+    GameUpdateAndRender(global_arena, &global_input, &output);
 
     // --- Parse Render Group ---
     MTLClearColor clear_color = MTLClearColorMake(0, 0, 0, 1);
     U32 offset = 0;
 
-    // First pass: Find clear command
+    // First pass: Pre-Render (Uploads and State)
     while (offset < output.render_group.size)
     {
       RenderGroupEntryHeader *header =
@@ -93,6 +139,31 @@ static void RenderFrame()
         clear_color = MTLClearColorMake(entry->color[0], entry->color[1],
                                         entry->color[2], entry->color[3]);
         offset += sizeof(RenderGroupEntry_Clear);
+      }
+      else if (header->type == RenderGroupEntryType_UploadTexture)
+      {
+        RenderGroupEntry_UploadTexture *entry =
+            (RenderGroupEntry_UploadTexture *)(output.render_group.base +
+                                               offset);
+        void *pixels = (void *)(entry + 1);
+
+        MTLTextureDescriptor *textureDesc = [[MTLTextureDescriptor alloc] init];
+        textureDesc.pixelFormat = MTLPixelFormatRGBA8Unorm;
+        textureDesc.width = entry->width;
+        textureDesc.height = entry->height;
+
+        id<MTLTexture> texture =
+            [global_device newTextureWithDescriptor:textureDesc];
+        MTLRegion region = MTLRegionMake2D(0, 0, entry->width, entry->height);
+        [texture replaceRegion:region
+                   mipmapLevel:0
+                     withBytes:pixels
+                   bytesPerRow:4 * entry->width];
+
+        global_textures[@(entry->handle)] = texture;
+
+        offset += sizeof(RenderGroupEntry_UploadTexture) +
+                  (entry->width * entry->height * 4);
       }
       else if (header->type == RenderGroupEntryType_DrawMesh)
       {
@@ -135,11 +206,25 @@ static void RenderFrame()
       {
         offset += sizeof(RenderGroupEntry_Clear);
       }
+      else if (header->type == RenderGroupEntryType_UploadTexture)
+      {
+        RenderGroupEntry_UploadTexture *entry =
+            (RenderGroupEntry_UploadTexture *)(output.render_group.base +
+                                               offset);
+        offset += sizeof(RenderGroupEntry_UploadTexture) +
+                  (entry->width * entry->height * 4);
+      }
       else if (header->type == RenderGroupEntryType_DrawMesh)
       {
         RenderGroupEntry_DrawMesh *entry =
             (RenderGroupEntry_DrawMesh *)(output.render_group.base + offset);
         Vertex *vertices = (Vertex *)(entry + 1);
+
+        id<MTLTexture> texture = global_textures[@(entry->texture_handle)];
+        if (texture)
+        {
+          [commandEncoder setFragmentTexture:texture atIndex:0];
+        }
 
         [commandEncoder setVertexBytes:&entry->uniforms
                                 length:sizeof(Uniforms)
@@ -166,9 +251,10 @@ int main(int argc, const char *argv[])
 {
   @autoreleasepool
   {
-    global_arena = ArenaAlloc();
+    global_arena = ArenaAlloc(1ull << 30, 1ull << 25);
     global_device = MTLCreateSystemDefaultDevice();
     global_command_queue = [global_device newCommandQueue];
+    global_textures = [[NSMutableDictionary alloc] init];
 
     // Create Depth Stencil State
     MTLDepthStencilDescriptor *depthDesc =
@@ -239,6 +325,8 @@ int main(int argc, const char *argv[])
     window.contentView = view;
 
     [window makeKeyAndOrderFront:nil];
+    // Required to capture keyboard events immediately
+    [window makeFirstResponder:view];
     [NSApp activateIgnoringOtherApps:YES];
 
     while (global_running)

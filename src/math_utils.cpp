@@ -1,6 +1,21 @@
 #include "math_utils.h"
 #include <math.h>
 
+simd_float3 math_normalize(simd_float3 v)
+{
+  return simd_normalize(v);
+}
+
+simd_float3 math_cross(simd_float3 a, simd_float3 b)
+{
+  return simd_cross(a, b);
+}
+
+float math_dot(simd_float3 a, simd_float3 b)
+{
+  return simd_dot(a, b);
+}
+
 simd_float4x4 math_make_translation(simd_float3 t)
 {
   return simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
@@ -49,8 +64,21 @@ simd_float4x4 math_make_perspective(float fovy_radians, float aspect,
   float xs = ys / aspect;
   float zs = farZ / (nearZ - farZ);
 
-  // Metal depth ranges from 0 to 1
   return simd_matrix(
       simd_make_float4(xs, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
       simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, nearZ * zs, 0));
+}
+
+simd_float4x4 math_make_look_at(simd_float3 eye, simd_float3 target,
+                                simd_float3 up)
+{
+  simd_float3 f = math_normalize(target - eye);
+  simd_float3 r = math_normalize(math_cross(f, up));
+  simd_float3 u = math_cross(r, f);
+
+  return simd_matrix(simd_make_float4(r.x, u.x, -f.x, 0.0f),
+                     simd_make_float4(r.y, u.y, -f.y, 0.0f),
+                     simd_make_float4(r.z, u.z, -f.z, 0.0f),
+                     simd_make_float4(-math_dot(r, eye), -math_dot(u, eye),
+                                      math_dot(f, eye), 1.0f));
 }

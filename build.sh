@@ -13,8 +13,9 @@ xcrun -sdk macosx metallib build/shaders.air -o build/shaders.metallib
 echo "Compiling C++ Code..."
 clang++ -g -O0 \
     -std=c++14 -fno-exceptions -fno-rtti \
+    -I libs/ \
     -framework Cocoa -framework Metal -framework QuartzCore \
-    src/osx_main.mm src/base_arena.cpp src/math_utils.cpp src/game.cpp \
+    src/osx_main.mm libs/base_arena.cpp src/math_utils.cpp src/game.cpp \
     -o build/engine
 
 echo "Build Complete! Run with ./build/engine or F5 in VSCode."

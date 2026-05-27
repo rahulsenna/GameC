@@ -2,6 +2,9 @@
 #include "math_utils.h"
 #include <math.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 {
   U32 total_size =
@@ -21,8 +24,35 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
   group->size += total_size;
 }
 
+void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
+                              U32 height, void *pixels)
+{
+  U32 pixel_data_size = width * height * 4;
+  U32 total_size = sizeof(RenderGroupEntryHeader) +
+                   sizeof(RenderGroupEntry_UploadTexture) + pixel_data_size;
+  Assert(group->size + total_size <= group->max_size);
+
+  RenderGroupEntryHeader *header =
+      (RenderGroupEntryHeader *)(group->base + group->size);
+  header->type = RenderGroupEntryType_UploadTexture;
+
+  RenderGroupEntry_UploadTexture *entry =
+      (RenderGroupEntry_UploadTexture *)(header + 1);
+  entry->handle = handle;
+  entry->width = width;
+  entry->height = height;
+
+  void *dst_pixels = (void *)(entry + 1);
+  for (U32 i = 0; i < pixel_data_size; ++i)
+  {
+    ((U8 *)dst_pixels)[i] = ((U8 *)pixels)[i];
+  }
+
+  group->size += total_size;
+}
+
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 vertex_count, Vertex *vertices)
+                         U32 texture_handle, U32 vertex_count, Vertex *vertices)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_DrawMesh) +
@@ -35,6 +65,7 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
 
   RenderGroupEntry_DrawMesh *entry = (RenderGroupEntry_DrawMesh *)(header + 1);
   entry->uniforms = uniforms;
+  entry->texture_handle = texture_handle;
   entry->vertex_count = vertex_count;
 
   Vertex *dst_vertices = (Vertex *)(entry + 1);
@@ -46,7 +77,8 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   group->size += total_size;
 }
 
-extern "C" void GameUpdateAndRender(Arena *arena, GameOutput *out_output)
+extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
+                                    GameOutput *out_output)
 {
   if (arena->pos == sizeof(Arena))
   {
@@ -54,86 +86,140 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameOutput *out_output)
   }
 
   GameState *state = (GameState *)((U8 *)arena + sizeof(Arena));
+  out_output->render_group.size = 0;
 
   if (!state->is_initialized)
   {
     state->is_initialized = 1;
     state->time = 0.0f;
+    state->texture_handle = 1;
+
+    state->camera.position = simd_make_float3(0.0f, 0.0f, 3.0f);
+    state->camera.yaw = -90.0f; // Look down -Z
+    state->camera.pitch = 0.0f;
+
+    // Load texture
+    int width, height, channels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char *data = stbi_load("assets/wall.jpg", &width, &height,
+                                    &channels, 4); // Force RGBA
+    if (data)
+    {
+      PushUploadTextureCommand(&out_output->render_group, state->texture_handle,
+                               width, height, data);
+      stbi_image_free(data);
+    }
   }
 
-  state->time += 0.016f;
+  float dt = 0.016f;
+  state->time += dt;
 
-  out_output->render_group.size = 0;
+  // --- Camera Update ---
+  float move_speed = 3.0f * dt;
+  float look_speed = 90.0f * dt; // degrees per second
+
+  if (input->key_up)
+    state->camera.pitch += look_speed;
+  if (input->key_down)
+    state->camera.pitch -= look_speed;
+  if (input->key_left)
+    state->camera.yaw -= look_speed;
+  if (input->key_right)
+    state->camera.yaw += look_speed;
+
+  // Prevent gimbal lock
+  if (state->camera.pitch > 89.0f)
+    state->camera.pitch = 89.0f;
+  if (state->camera.pitch < -89.0f)
+    state->camera.pitch = -89.0f;
+
+  simd_float3 front;
+  front.x = cosf(state->camera.yaw * (M_PI / 180.0f)) *
+            cosf(state->camera.pitch * (M_PI / 180.0f));
+  front.y = sinf(state->camera.pitch * (M_PI / 180.0f));
+  front.z = sinf(state->camera.yaw * (M_PI / 180.0f)) *
+            cosf(state->camera.pitch * (M_PI / 180.0f));
+  front = math_normalize(front);
+
+  simd_float3 up = simd_make_float3(0.0f, 1.0f, 0.0f);
+  simd_float3 right = math_normalize(math_cross(front, up));
+
+  if (input->key_w)
+    state->camera.position += front * move_speed;
+  if (input->key_s)
+    state->camera.position -= front * move_speed;
+  if (input->key_a)
+    state->camera.position -= right * move_speed;
+  if (input->key_d)
+    state->camera.position += right * move_speed;
+
+  // --- Render ---
   PushClearCommand(&out_output->render_group, 0.1f, 0.1f, 0.1f, 1.0f);
 
-  // Define a Cube (36 vertices)
-  Vertex cube_vertices[] = {// Front Face (Red)
-                            {{-0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
-                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
-                            {{-0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
-                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
-                            {{-0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+  Vertex cube_vertices[] = {// Front Face (Normal 0, 0, 1)
+                            {{-0.5, -0.5, 0.5}, {0, 0, 1}, {0.0, 0.0}},
+                            {{0.5, -0.5, 0.5}, {0, 0, 1}, {1.0, 0.0}},
+                            {{-0.5, 0.5, 0.5}, {0, 0, 1}, {0.0, 1.0}},
+                            {{0.5, -0.5, 0.5}, {0, 0, 1}, {1.0, 0.0}},
+                            {{0.5, 0.5, 0.5}, {0, 0, 1}, {1.0, 1.0}},
+                            {{-0.5, 0.5, 0.5}, {0, 0, 1}, {0.0, 1.0}},
 
-                            // Back Face (Green)
-                            {{0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
-                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
-                            {{0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
-                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
-                            {{0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            // Back Face (Normal 0, 0, -1)
+                            {{0.5, -0.5, -0.5}, {0, 0, -1}, {0.0, 0.0}},
+                            {{-0.5, -0.5, -0.5}, {0, 0, -1}, {1.0, 0.0}},
+                            {{0.5, 0.5, -0.5}, {0, 0, -1}, {0.0, 1.0}},
+                            {{-0.5, -0.5, -0.5}, {0, 0, -1}, {1.0, 0.0}},
+                            {{-0.5, 0.5, -0.5}, {0, 0, -1}, {1.0, 1.0}},
+                            {{0.5, 0.5, -0.5}, {0, 0, -1}, {0.0, 1.0}},
 
-                            // Top Face (Blue)
-                            {{-0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            // Top Face (Normal 0, 1, 0)
+                            {{-0.5, 0.5, 0.5}, {0, 1, 0}, {0.0, 0.0}},
+                            {{0.5, 0.5, 0.5}, {0, 1, 0}, {1.0, 0.0}},
+                            {{-0.5, 0.5, -0.5}, {0, 1, 0}, {0.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {0, 1, 0}, {1.0, 0.0}},
+                            {{0.5, 0.5, -0.5}, {0, 1, 0}, {1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0, 1, 0}, {0.0, 1.0}},
 
-                            // Bottom Face (Yellow)
-                            {{-0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
-                            {{0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            // Bottom Face (Normal 0, -1, 0)
+                            {{-0.5, -0.5, -0.5}, {0, -1, 0}, {0.0, 0.0}},
+                            {{0.5, -0.5, -0.5}, {0, -1, 0}, {1.0, 0.0}},
+                            {{-0.5, -0.5, 0.5}, {0, -1, 0}, {0.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {0, -1, 0}, {1.0, 0.0}},
+                            {{0.5, -0.5, 0.5}, {0, -1, 0}, {1.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {0, -1, 0}, {0.0, 1.0}},
 
-                            // Right Face (Magenta)
-                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
-                            {{0.5, -0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
-                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            // Right Face (Normal 1, 0, 0)
+                            {{0.5, -0.5, 0.5}, {1, 0, 0}, {0.0, 0.0}},
+                            {{0.5, -0.5, -0.5}, {1, 0, 0}, {1.0, 0.0}},
+                            {{0.5, 0.5, 0.5}, {1, 0, 0}, {0.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {1, 0, 0}, {1.0, 0.0}},
+                            {{0.5, 0.5, -0.5}, {1, 0, 0}, {1.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {1, 0, 0}, {0.0, 1.0}},
 
-                            // Left Face (Cyan)
-                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}},
-                            {{-0.5, -0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
-                            {{-0.5, 0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
-                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}}};
+                            // Left Face (Normal -1, 0, 0)
+                            {{-0.5, -0.5, -0.5}, {-1, 0, 0}, {0.0, 0.0}},
+                            {{-0.5, -0.5, 0.5}, {-1, 0, 0}, {1.0, 0.0}},
+                            {{-0.5, 0.5, -0.5}, {-1, 0, 0}, {0.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {-1, 0, 0}, {1.0, 0.0}},
+                            {{-0.5, 0.5, 0.5}, {-1, 0, 0}, {1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {-1, 0, 0}, {0.0, 1.0}}};
 
-  // 1. Model Matrix (Rotate over time)
-  simd_float4x4 mat_rot_y = math_make_rotation_y(state->time);
-  simd_float4x4 mat_rot_x = math_make_rotation_x(state->time * 0.5f);
-  simd_float4x4 model_matrix = simd_mul(mat_rot_y, mat_rot_x);
+  simd_float4x4 model_matrix =
+      simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+                  simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 0, 0, 1));
 
-  // 2. View Matrix (Move camera backwards along Z)
-  simd_float4x4 view_matrix =
-      math_make_translation(simd_make_float3(0, 0, -3.0f));
+  simd_float4x4 view_matrix = math_make_look_at(
+      state->camera.position, state->camera.position + front, up);
 
-  // 3. Projection Matrix
   float fov = 60.0f * (3.14159f / 180.0f);
-  float aspect = 800.0f / 600.0f; // Typical aspect ratio
+  float aspect = 800.0f / 800.0f;
   simd_float4x4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
 
-  // MVP = Proj * View * Model
   simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
   simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-  Uniforms uniforms = {mvp_matrix};
+  Uniforms uniforms = {mvp_matrix, model_matrix};
 
-  PushDrawMeshCommand(&out_output->render_group, uniforms, 36, cube_vertices);
+  PushDrawMeshCommand(&out_output->render_group, uniforms,
+                      state->texture_handle, 36, cube_vertices);
 }
