@@ -405,3 +405,22 @@ MeshData CreateTriangularPrism(Arena *arena, float width, float height, float de
 
     return mesh;
 }
+
+MeshData CreatePlane(Arena *arena, float size)
+{
+    MeshData mesh;
+    mesh.vertex_count = 6;
+    mesh.vertices = PushArray(arena, Vertex, mesh.vertex_count);
+    U32 idx = 0;
+    float hs = size * 0.5f;
+
+    // Plane on XZ axis (Y = 0)
+    AddQuad(mesh.vertices, idx,
+            -hs, 0.0f,  hs, 0, 1,
+             hs, 0.0f,  hs, 1, 1,
+             hs, 0.0f, -hs, 1, 0,
+            -hs, 0.0f, -hs, 0, 0,
+            0, 1, 0);
+
+    return mesh;
+}

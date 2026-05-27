@@ -12,3 +12,4 @@ MeshData CreateCone(Arena *arena, float radius = 0.5f, float height = 1.0f, int 
 MeshData CreateTriangularPyramid(Arena *arena, float size = 1.0f);
 MeshData CreateSquarePyramid(Arena *arena, float base_size = 1.0f, float height = 1.0f);
 MeshData CreateTriangularPrism(Arena *arena, float width = 1.0f, float height = 1.0f, float depth = 1.0f);
+MeshData CreatePlane(Arena *arena, float size = 1000.0f);

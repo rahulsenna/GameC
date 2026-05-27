@@ -10,6 +10,7 @@ static Arena *global_arena = nullptr;
 static id<MTLDevice> global_device = nil;
 static id<MTLCommandQueue> global_command_queue = nil;
 static id<MTLRenderPipelineState> global_pipeline_state = nil;
+static id<MTLRenderPipelineState> global_grid_pipeline_state = nil;
 static id<MTLDepthStencilState> global_depth_state = nil;
 static id<MTLTexture> global_depth_texture = nil;
 static CAMetalLayer *global_metal_layer = nil;
@@ -105,7 +106,32 @@ static void MacLoadShaders() {
     if (!global_pipeline_state)
     {
       NSLog(@"Failed to create pipeline state: %@", error);
-    } else {
+    }
+    
+    // Grid Pipeline
+    id<MTLFunction> gridFragmentFunction =
+        [defaultLibrary newFunctionWithName:@"grid_fragment_main"];
+    pipelineStateDescriptor.label = @"Grid Pipeline";
+    pipelineStateDescriptor.fragmentFunction = gridFragmentFunction;
+    
+    // Enable Alpha Blending for the Grid
+    pipelineStateDescriptor.colorAttachments[0].blendingEnabled = YES;
+    pipelineStateDescriptor.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+    pipelineStateDescriptor.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+    pipelineStateDescriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+    pipelineStateDescriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+    pipelineStateDescriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    pipelineStateDescriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+
+    global_grid_pipeline_state = [global_device
+        newRenderPipelineStateWithDescriptor:pipelineStateDescriptor
+                                       error:&error];
+    if (!global_grid_pipeline_state)
+    {
+      NSLog(@"Failed to create grid pipeline state: %@", error);
+    }
+
+    if (global_pipeline_state && global_grid_pipeline_state) {
       NSLog(@"Shaders loaded successfully!");
       global_shader_write_time = GetFileWriteTime("build/shaders.metallib");
     }
@@ -290,7 +316,6 @@ static void RenderFrame()
     id<MTLRenderCommandEncoder> commandEncoder =
         [commandBuffer renderCommandEncoderWithDescriptor:passDescriptor];
 
-    [commandEncoder setRenderPipelineState:global_pipeline_state];
     [commandEncoder setDepthStencilState:global_depth_state];
 
     // Second pass: Draw commands
@@ -319,8 +344,14 @@ static void RenderFrame()
             (RenderGroupEntry_DrawMesh *)(output.render_group.base + offset);
         Vertex *vertices = (Vertex *)(entry + 1);
 
+        if (entry->shader_type == 1) {
+            [commandEncoder setRenderPipelineState:global_grid_pipeline_state];
+        } else {
+            [commandEncoder setRenderPipelineState:global_pipeline_state];
+        }
+
         id<MTLTexture> texture = global_textures[@(entry->texture_handle)];
-        if (texture)
+        if (texture && entry->shader_type == 0)
         {
           [commandEncoder setFragmentTexture:texture atIndex:0];
         }

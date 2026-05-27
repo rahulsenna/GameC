@@ -40,7 +40,7 @@ struct GameState
   F32 time;
   U32 texture_handle;
   Camera camera;
-  MeshData shapes[9];
+  MeshData shapes[10];
 };
 
 // -- Render Command Structures --
@@ -78,6 +78,7 @@ struct Uniforms
   simd_float4x4 model_matrix;
   simd_float3 light_dir;
   simd_float3 light_color;
+  simd_float3 camera_pos;
   float ambient_intensity;
 };
 
@@ -85,6 +86,7 @@ struct RenderGroupEntry_DrawMesh
 {
   Uniforms uniforms;
   U32 texture_handle;
+  U32 shader_type;
   U32 vertex_count;
   // Note: Vertices array is stored immediately following this struct in memory!
 };
@@ -100,7 +102,7 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
 void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
                               U32 height, void *pixels);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 texture_handle, U32 vertex_count,
+                         U32 texture_handle, U32 shader_type, U32 vertex_count,
                          Vertex *vertices);
 
 // -- Game Output --

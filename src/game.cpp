@@ -53,7 +53,7 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
 }
 
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 texture_handle, U32 vertex_count, Vertex *vertices)
+                         U32 texture_handle, U32 shader_type, U32 vertex_count, Vertex *vertices)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_DrawMesh) +
@@ -67,6 +67,7 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   RenderGroupEntry_DrawMesh *entry = (RenderGroupEntry_DrawMesh *)(header + 1);
   entry->uniforms = uniforms;
   entry->texture_handle = texture_handle;
+  entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
 
   Vertex *dst_vertices = (Vertex *)(entry + 1);
@@ -95,7 +96,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->time = 0.0f;
     state->texture_handle = 1;
 
-    state->camera.position = simd_make_float3(0.0f, 0.0f, 3.0f);
+    state->camera.position = simd_make_float3(0.0f, 2.0f, 5.0f);
     state->camera.yaw = -90.0f; // Look down -Z
     state->camera.pitch = 0.0f;
 
@@ -121,6 +122,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->shapes[6] = CreateTriangularPyramid(arena);
     state->shapes[7] = CreateSquarePyramid(arena);
     state->shapes[8] = CreateTriangularPrism(arena);
+    state->shapes[9] = CreatePlane(arena, 1000.0f);
   }
 
   float dt = 0.016f;
@@ -177,13 +179,49 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
 
+  // 1. Draw Infinite Grid Plane
+  {
+      simd_float4x4 model_matrix = simd_matrix(
+          simd_make_float4(1, 0, 0, 0),
+          simd_make_float4(0, 1, 0, 0),
+          simd_make_float4(0, 0, 1, 0),
+          simd_make_float4(0, -0.5f, 0, 1) // Set plane to ground level (-0.5 is the exact bottom bound for most of our shapes)
+      );
+      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+      Uniforms uniforms = {};
+      uniforms.mvp_matrix = mvp_matrix;
+      uniforms.model_matrix = model_matrix;
+      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
+      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+      uniforms.camera_pos = state->camera.position;
+      uniforms.ambient_intensity = 0.2f;
+
+      PushDrawMeshCommand(&out_output->render_group, uniforms,
+                          state->texture_handle, 1, state->shapes[9].vertex_count, state->shapes[9].vertices);
+  }
+
+  // 2. Draw 9 Shapes
+  float shape_y_offsets[9] = {
+      0.0f,    // 0: Sphere (bottom at -0.5)
+      -0.3f,   // 1: Torus (bottom at -0.2 -> needs to move down 0.3 to rest at -0.5)
+      0.0f,    // 2: Cylinder (bottom at -0.5)
+      0.0f,    // 3: Cone (bottom at -0.5)
+      0.0f,    // 4: Cube (bottom at -0.5)
+      -0.25f,  // 5: Cuboid (height 0.5 -> bottom at -0.25 -> needs to move down 0.25 to rest at -0.5)
+      0.0f,    // 6: TriangularPyramid (bottom at -0.5)
+      0.0f,    // 7: SquarePyramid (bottom at -0.5)
+      0.0f     // 8: TriangularPrism (bottom at -0.5)
+  };
+
   for (int i = 0; i < 9; ++i)
   {
       float x = (i % 3) * 2.5f - 2.5f;
       float z = (i / 3) * 2.5f - 2.5f;
+      float y = shape_y_offsets[i];
       simd_float4x4 trans_matrix =
           simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                      simd_make_float4(0, 0, 1, 0), simd_make_float4(x, 0, z, 1));
+                      simd_make_float4(0, 0, 1, 0), simd_make_float4(x, y, z, 1));
 
       float angle = state->time * 0.5f + i;
       simd_float4x4 rot_y = simd_matrix(
@@ -201,9 +239,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
       uniforms.model_matrix = model_matrix;
       uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
       uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+      uniforms.camera_pos = state->camera.position;
       uniforms.ambient_intensity = 0.2f;
 
       PushDrawMeshCommand(&out_output->render_group, uniforms,
-                          state->texture_handle, state->shapes[i].vertex_count, state->shapes[i].vertices);
+                          state->texture_handle, 0, state->shapes[i].vertex_count, state->shapes[i].vertices);
   }
 }

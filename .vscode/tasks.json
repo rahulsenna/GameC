@@ -16,7 +16,8 @@
     {
       "label": "Build",
       "type": "shell",
-      "command": "./rebuild_game_and_shader.sh",
+      "command": "./build.sh",
+      "args": ["-sg"],
       "group": {
         "kind": "build",
         "isDefault": true
