@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Engine",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/engine",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "Build Engine"
+    }
+  ]
+}
