@@ -13,7 +13,7 @@ struct GameState
 enum RenderGroupEntryType
 {
   RenderGroupEntryType_Clear,
-  RenderGroupEntryType_DrawTriangle,
+  RenderGroupEntryType_DrawMesh,
 };
 
 struct RenderGroupEntryHeader
@@ -28,13 +28,20 @@ struct RenderGroupEntry_Clear
 
 struct Vertex
 {
-  simd_float2 position;
+  simd_float3 position;
   simd_float4 color;
 };
 
-struct RenderGroupEntry_DrawTriangle
+struct Uniforms
 {
-  Vertex vertices[3];
+  simd_float4x4 mvp_matrix;
+};
+
+struct RenderGroupEntry_DrawMesh
+{
+  Uniforms uniforms;
+  U32 vertex_count;
+  // Note: Vertices array is stored immediately following this struct in memory!
 };
 
 struct RenderGroup
@@ -45,8 +52,8 @@ struct RenderGroup
 };
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
-void PushDrawTriangleCommand(RenderGroup *group, Vertex v0, Vertex v1,
-                             Vertex v2);
+void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
+                         U32 vertex_count, Vertex *vertices);
 
 // -- Game Output --
 

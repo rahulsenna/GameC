@@ -1,4 +1,5 @@
 #include "game.h"
+#include "math_utils.h"
 #include <math.h>
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
@@ -20,22 +21,27 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
   group->size += total_size;
 }
 
-void PushDrawTriangleCommand(RenderGroup *group, Vertex v0, Vertex v1,
-                             Vertex v2)
+void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
+                         U32 vertex_count, Vertex *vertices)
 {
-  U32 total_size =
-      sizeof(RenderGroupEntryHeader) + sizeof(RenderGroupEntry_DrawTriangle);
+  U32 total_size = sizeof(RenderGroupEntryHeader) +
+                   sizeof(RenderGroupEntry_DrawMesh) +
+                   sizeof(Vertex) * vertex_count;
   Assert(group->size + total_size <= group->max_size);
 
   RenderGroupEntryHeader *header =
       (RenderGroupEntryHeader *)(group->base + group->size);
-  header->type = RenderGroupEntryType_DrawTriangle;
+  header->type = RenderGroupEntryType_DrawMesh;
 
-  RenderGroupEntry_DrawTriangle *entry =
-      (RenderGroupEntry_DrawTriangle *)(header + 1);
-  entry->vertices[0] = v0;
-  entry->vertices[1] = v1;
-  entry->vertices[2] = v2;
+  RenderGroupEntry_DrawMesh *entry = (RenderGroupEntry_DrawMesh *)(header + 1);
+  entry->uniforms = uniforms;
+  entry->vertex_count = vertex_count;
+
+  Vertex *dst_vertices = (Vertex *)(entry + 1);
+  for (U32 i = 0; i < vertex_count; ++i)
+  {
+    dst_vertices[i] = vertices[i];
+  }
 
   group->size += total_size;
 }
@@ -57,42 +63,77 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameOutput *out_output)
 
   state->time += 0.016f;
 
-  // Initialize RenderGroup. For this simple phase, we'll just allocate a
-  // temporary chunk of memory from the arena that the platform layer will use
-  // and then we reset it next frame. Actually, we can just use the arena for
-  // temporary allocation and pop it later. Or we just give it a fixed size
-  // static buffer for now. Let's push onto the arena, and the platform layer
-  // doesn't need to pop, we can pop at the end of the frame in the platform
-  // layer. We'll just allocate the RenderGroup memory directly in the platform
-  // layer and pass it down in GameOutput. For safety, let's assume
-  // `out_output->render_group.base` and `max_size` are pre-filled by
-  // osx_main.mm!
   out_output->render_group.size = 0;
+  PushClearCommand(&out_output->render_group, 0.1f, 0.1f, 0.1f, 1.0f);
 
-  F32 r = 0.1f;
-  F32 g = 0.1f;
-  F32 b = 0.1f;
-  F32 a = 1.0f;
-  PushClearCommand(&out_output->render_group, r, g, b, a);
+  // Define a Cube (36 vertices)
+  Vertex cube_vertices[] = {// Front Face (Red)
+                            {{-0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+                            {{-0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
+                            {{-0.5, 0.5, 0.5}, {1.0, 0.0, 0.0, 1.0}},
 
-  // Draw a spinning triangle!
-  F32 scale = 0.5f;
-  F32 c = cosf(state->time);
-  F32 s = sinf(state->time);
+                            // Back Face (Green)
+                            {{0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            {{0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
+                            {{0.5, 0.5, -0.5}, {0.0, 1.0, 0.0, 1.0}},
 
-  // Top vertex (0, 1)
-  Vertex v0 = {{(0.0f * c - 1.0f * s) * scale, (0.0f * s + 1.0f * c) * scale},
-               {1.0f, 0.0f, 0.0f, 1.0f}};
+                            // Top Face (Blue)
+                            {{-0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0.0, 0.0, 1.0, 1.0}},
 
-  // Bottom Right (1, -1)
-  Vertex v1 = {
-      {(1.0f * c - (-1.0f) * s) * scale, (1.0f * s + (-1.0f) * c) * scale},
-      {0.0f, 1.0f, 0.0f, 1.0f}};
+                            // Bottom Face (Yellow)
+                            {{-0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            {{0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {1.0, 1.0, 0.0, 1.0}},
 
-  // Bottom Left (-1, -1)
-  Vertex v2 = {
-      {(-1.0f * c - (-1.0f) * s) * scale, (-1.0f * s + (-1.0f) * c) * scale},
-      {0.0f, 0.0f, 1.0f, 1.0f}};
+                            // Right Face (Magenta)
+                            {{0.5, -0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            {{0.5, -0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, -0.5}, {1.0, 0.0, 1.0, 1.0}},
+                            {{0.5, 0.5, 0.5}, {1.0, 0.0, 1.0, 1.0}},
 
-  PushDrawTriangleCommand(&out_output->render_group, v0, v1, v2);
+                            // Left Face (Cyan)
+                            {{-0.5, -0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}},
+                            {{-0.5, -0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
+                            {{-0.5, 0.5, 0.5}, {0.0, 1.0, 1.0, 1.0}},
+                            {{-0.5, 0.5, -0.5}, {0.0, 1.0, 1.0, 1.0}}};
+
+  // 1. Model Matrix (Rotate over time)
+  simd_float4x4 mat_rot_y = math_make_rotation_y(state->time);
+  simd_float4x4 mat_rot_x = math_make_rotation_x(state->time * 0.5f);
+  simd_float4x4 model_matrix = simd_mul(mat_rot_y, mat_rot_x);
+
+  // 2. View Matrix (Move camera backwards along Z)
+  simd_float4x4 view_matrix =
+      math_make_translation(simd_make_float3(0, 0, -3.0f));
+
+  // 3. Projection Matrix
+  float fov = 60.0f * (3.14159f / 180.0f);
+  float aspect = 800.0f / 600.0f; // Typical aspect ratio
+  simd_float4x4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
+
+  // MVP = Proj * View * Model
+  simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
+  simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+  Uniforms uniforms = {mvp_matrix};
+
+  PushDrawMeshCommand(&out_output->render_group, uniforms, 36, cube_vertices);
 }

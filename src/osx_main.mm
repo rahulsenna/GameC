@@ -7,6 +7,8 @@ static Arena *global_arena = nullptr;
 static id<MTLDevice> global_device = nil;
 static id<MTLCommandQueue> global_command_queue = nil;
 static id<MTLRenderPipelineState> global_pipeline_state = nil;
+static id<MTLDepthStencilState> global_depth_state = nil;
+static id<MTLTexture> global_depth_texture = nil;
 static CAMetalLayer *global_metal_layer = nil;
 static bool global_running = true;
 
@@ -35,6 +37,24 @@ static bool global_running = true;
 }
 @end
 
+static void UpdateDepthTexture(CGSize size)
+{
+  if (global_depth_texture && global_depth_texture.width == size.width &&
+      global_depth_texture.height == size.height)
+  {
+    return;
+  }
+
+  MTLTextureDescriptor *desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                   width:size.width
+                                  height:size.height
+                               mipmapped:NO];
+  desc.usage = MTLTextureUsageRenderTarget;
+  desc.storageMode = MTLStorageModePrivate;
+  global_depth_texture = [global_device newTextureWithDescriptor:desc];
+}
+
 static void RenderFrame()
 {
   @autoreleasepool
@@ -43,10 +63,10 @@ static void RenderFrame()
     if (!drawable)
       return;
 
-    // We will allocate a temporary buffer for the render group
-    // In a real engine this would be a specialized temporary arena that resets
-    // every frame.
-    U8 render_buffer[1024 * 64];
+    UpdateDepthTexture(
+        CGSizeMake(drawable.texture.width, drawable.texture.height));
+
+    U8 render_buffer[1024 * 512]; // Increased buffer size for 3D meshes
     GameOutput output = {};
     output.render_group.base = render_buffer;
     output.render_group.size = 0;
@@ -56,14 +76,10 @@ static void RenderFrame()
     GameUpdateAndRender(global_arena, &output);
 
     // --- Parse Render Group ---
-
-    // Default clear color in case no clear command was pushed
     MTLClearColor clear_color = MTLClearColorMake(0, 0, 0, 1);
-
     U32 offset = 0;
 
-    // First pass: Find clear command (Metal needs it for the render pass
-    // descriptor)
+    // First pass: Find clear command
     while (offset < output.render_group.size)
     {
       RenderGroupEntryHeader *header =
@@ -78,9 +94,12 @@ static void RenderFrame()
                                         entry->color[2], entry->color[3]);
         offset += sizeof(RenderGroupEntry_Clear);
       }
-      else if (header->type == RenderGroupEntryType_DrawTriangle)
+      else if (header->type == RenderGroupEntryType_DrawMesh)
       {
-        offset += sizeof(RenderGroupEntry_DrawTriangle);
+        RenderGroupEntry_DrawMesh *entry =
+            (RenderGroupEntry_DrawMesh *)(output.render_group.base + offset);
+        offset += sizeof(RenderGroupEntry_DrawMesh) +
+                  sizeof(Vertex) * entry->vertex_count;
       }
     }
 
@@ -92,11 +111,17 @@ static void RenderFrame()
     passDescriptor.colorAttachments[0].clearColor = clear_color;
     passDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
+    passDescriptor.depthAttachment.texture = global_depth_texture;
+    passDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+    passDescriptor.depthAttachment.clearDepth = 1.0;
+    passDescriptor.depthAttachment.storeAction = MTLStoreActionDontCare;
+
     id<MTLCommandBuffer> commandBuffer = [global_command_queue commandBuffer];
     id<MTLRenderCommandEncoder> commandEncoder =
         [commandBuffer renderCommandEncoderWithDescriptor:passDescriptor];
 
     [commandEncoder setRenderPipelineState:global_pipeline_state];
+    [commandEncoder setDepthStencilState:global_depth_state];
 
     // Second pass: Draw commands
     offset = 0;
@@ -110,20 +135,24 @@ static void RenderFrame()
       {
         offset += sizeof(RenderGroupEntry_Clear);
       }
-      else if (header->type == RenderGroupEntryType_DrawTriangle)
+      else if (header->type == RenderGroupEntryType_DrawMesh)
       {
-        RenderGroupEntry_DrawTriangle *entry =
-            (RenderGroupEntry_DrawTriangle *)(output.render_group.base +
-                                              offset);
+        RenderGroupEntry_DrawMesh *entry =
+            (RenderGroupEntry_DrawMesh *)(output.render_group.base + offset);
+        Vertex *vertices = (Vertex *)(entry + 1);
 
-        [commandEncoder setVertexBytes:entry->vertices
-                                length:sizeof(entry->vertices)
+        [commandEncoder setVertexBytes:&entry->uniforms
+                                length:sizeof(Uniforms)
+                               atIndex:1];
+        [commandEncoder setVertexBytes:vertices
+                                length:sizeof(Vertex) * entry->vertex_count
                                atIndex:0];
         [commandEncoder drawPrimitives:MTLPrimitiveTypeTriangle
                            vertexStart:0
-                           vertexCount:3];
+                           vertexCount:entry->vertex_count];
 
-        offset += sizeof(RenderGroupEntry_DrawTriangle);
+        offset += sizeof(RenderGroupEntry_DrawMesh) +
+                  sizeof(Vertex) * entry->vertex_count;
       }
     }
 
@@ -140,6 +169,14 @@ int main(int argc, const char *argv[])
     global_arena = ArenaAlloc();
     global_device = MTLCreateSystemDefaultDevice();
     global_command_queue = [global_device newCommandQueue];
+
+    // Create Depth Stencil State
+    MTLDepthStencilDescriptor *depthDesc =
+        [[MTLDepthStencilDescriptor alloc] init];
+    depthDesc.depthCompareFunction = MTLCompareFunctionLess;
+    depthDesc.depthWriteEnabled = YES;
+    global_depth_state =
+        [global_device newDepthStencilStateWithDescriptor:depthDesc];
 
     // Load Shaders
     NSString *libPath = [NSString
@@ -167,6 +204,8 @@ int main(int argc, const char *argv[])
     pipelineStateDescriptor.fragmentFunction = fragmentFunction;
     pipelineStateDescriptor.colorAttachments[0].pixelFormat =
         MTLPixelFormatBGRA8Unorm;
+    pipelineStateDescriptor.depthAttachmentPixelFormat =
+        MTLPixelFormatDepth32Float;
 
     global_pipeline_state = [global_device
         newRenderPipelineStateWithDescriptor:pipelineStateDescriptor
@@ -177,11 +216,10 @@ int main(int argc, const char *argv[])
       return 1;
     }
 
-    // App Initialization
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    NSRect frame = NSMakeRect(0, 0, 800, 800);
+    NSRect frame = NSMakeRect(0, 0, 800, 600);
     NSWindow *window =
         [[NSWindow alloc] initWithContentRect:frame
                                     styleMask:(NSWindowStyleMaskTitled |
