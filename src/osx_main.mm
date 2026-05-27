@@ -317,6 +317,8 @@ static void RenderFrame()
         [commandBuffer renderCommandEncoderWithDescriptor:passDescriptor];
 
     [commandEncoder setDepthStencilState:global_depth_state];
+    [commandEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
+    [commandEncoder setCullMode:MTLCullModeBack];
 
     // Second pass: Draw commands
     offset = 0;

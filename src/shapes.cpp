@@ -147,15 +147,15 @@ MeshData CreateSphere(Arena *arena, float radius, int sectors, int stacks)
             float px4 = x0 * zr1; float py4 = y0 * zr1; float pz4 = z1;
             float nx4 = px4/radius; float ny4 = py4/radius; float nz4 = pz4/radius;
 
-            // Triangle 1: p1 -> p2 -> p3
+            // Triangle 1: p1 -> p3 -> p2
             AddVertex(mesh.vertices, idx, px1, pz1, py1, nx1, nz1, ny1, u0, v0); // Swapping Y and Z for y-up coordinate system
+            AddVertex(mesh.vertices, idx, px3, pz3, py3, nx3, nz3, ny3, u1, v1);
             AddVertex(mesh.vertices, idx, px2, pz2, py2, nx2, nz2, ny2, u1, v0);
-            AddVertex(mesh.vertices, idx, px3, pz3, py3, nx3, nz3, ny3, u1, v1);
 
-            // Triangle 2: p1 -> p3 -> p4
+            // Triangle 2: p1 -> p4 -> p3
             AddVertex(mesh.vertices, idx, px1, pz1, py1, nx1, nz1, ny1, u0, v0);
-            AddVertex(mesh.vertices, idx, px3, pz3, py3, nx3, nz3, ny3, u1, v1);
             AddVertex(mesh.vertices, idx, px4, pz4, py4, nx4, nz4, ny4, u0, v1);
+            AddVertex(mesh.vertices, idx, px3, pz3, py3, nx3, nz3, ny3, u1, v1);
         }
     }
 
@@ -205,12 +205,12 @@ MeshData CreateTorus(Arena *arena, float main_radius, float tube_radius, int mai
             calc_pos(theta0, phi1, px01, py01, pz01, nx01, ny01, nz01);
 
             AddVertex(mesh.vertices, idx, px00, py00, pz00, nx00, ny00, nz00, u0, v0);
-            AddVertex(mesh.vertices, idx, px10, py10, pz10, nx10, ny10, nz10, u1, v0);
             AddVertex(mesh.vertices, idx, px11, py11, pz11, nx11, ny11, nz11, u1, v1);
+            AddVertex(mesh.vertices, idx, px10, py10, pz10, nx10, ny10, nz10, u1, v0);
 
             AddVertex(mesh.vertices, idx, px00, py00, pz00, nx00, ny00, nz00, u0, v0);
-            AddVertex(mesh.vertices, idx, px11, py11, pz11, nx11, ny11, nz11, u1, v1);
             AddVertex(mesh.vertices, idx, px01, py01, pz01, nx01, ny01, nz01, u0, v1);
+            AddVertex(mesh.vertices, idx, px11, py11, pz11, nx11, ny11, nz11, u1, v1);
         }
     }
     return mesh;
@@ -238,24 +238,24 @@ MeshData CreateCylinder(Arena *arena, float radius, float height, int sectors)
 
         // Side
         AddQuad(mesh.vertices, idx,
-                c0 * radius, -hh, s0 * radius, u0, 1.0f,
                 c1 * radius, -hh, s1 * radius, u1, 1.0f,
-                c1 * radius,  hh, s1 * radius, u1, 0.0f,
+                c0 * radius, -hh, s0 * radius, u0, 1.0f,
                 c0 * radius,  hh, s0 * radius, u0, 0.0f,
+                c1 * radius,  hh, s1 * radius, u1, 0.0f,
                 (c0+c1)*0.5f, 0, (s0+s1)*0.5f); // normal approx
 
         // Top
         AddTriangle(mesh.vertices, idx,
                     0, hh, 0, 0.5f, 0.5f,
-                    c0 * radius, hh, s0 * radius, c0*0.5f+0.5f, s0*0.5f+0.5f,
                     c1 * radius, hh, s1 * radius, c1*0.5f+0.5f, s1*0.5f+0.5f,
+                    c0 * radius, hh, s0 * radius, c0*0.5f+0.5f, s0*0.5f+0.5f,
                     0, 1, 0);
 
         // Bottom
         AddTriangle(mesh.vertices, idx,
                     0, -hh, 0, 0.5f, 0.5f,
-                    c1 * radius, -hh, s1 * radius, c1*0.5f+0.5f, s1*0.5f+0.5f,
                     c0 * radius, -hh, s0 * radius, c0*0.5f+0.5f, s0*0.5f+0.5f,
+                    c1 * radius, -hh, s1 * radius, c1*0.5f+0.5f, s1*0.5f+0.5f,
                     0, -1, 0);
     }
     // Fix side normals
@@ -299,16 +299,16 @@ MeshData CreateCone(Arena *arena, float radius, float height, int sectors)
 
         // Side
         AddTriangle(mesh.vertices, idx,
-                    c0 * radius, -hh, s0 * radius, u0, 1.0f,
                     c1 * radius, -hh, s1 * radius, u1, 1.0f,
+                    c0 * radius, -hh, s0 * radius, u0, 1.0f,
                     0,  hh, 0, u0 + (u1-u0)*0.5f, 0.0f,
                     nx, ny, nz);
 
         // Bottom
         AddTriangle(mesh.vertices, idx,
                     0, -hh, 0, 0.5f, 0.5f,
-                    c1 * radius, -hh, s1 * radius, c1*0.5f+0.5f, s1*0.5f+0.5f,
                     c0 * radius, -hh, s0 * radius, c0*0.5f+0.5f, s0*0.5f+0.5f,
+                    c1 * radius, -hh, s1 * radius, c1*0.5f+0.5f, s1*0.5f+0.5f,
                     0, -1, 0);
     }
     return mesh;
@@ -329,14 +329,14 @@ MeshData CreateTriangularPyramid(Arena *arena, float size)
     // Top
     float tx = 0, ty = r, tz = 0;
 
-    // Bottom
-    AddTriangle(mesh.vertices, idx, ax, ay, az, 0.5f, 1, cx, cy, cz, 1, 0, bx, by, bz, 0, 0, 0, -1, 0);
-    // Face A-B-Top
-    AddTriangle(mesh.vertices, idx, ax, ay, az, 1, 1, bx, by, bz, 0, 1, tx, ty, tz, 0.5f, 0, -0.866f, 0.5f, 0.5f);
-    // Face B-C-Top
-    AddTriangle(mesh.vertices, idx, bx, by, bz, 0, 1, cx, cy, cz, 1, 1, tx, ty, tz, 0.5f, 0, 0, 0.5f, -1);
-    // Face C-A-Top
-    AddTriangle(mesh.vertices, idx, cx, cy, cz, 0, 1, ax, ay, az, 1, 1, tx, ty, tz, 0.5f, 0, 0.866f, 0.5f, 0.5f);
+    // Bottom (swap B and C)
+    AddTriangle(mesh.vertices, idx, ax, ay, az, 0.5f, 1, bx, by, bz, 0, 0, cx, cy, cz, 1, 0, 0, -1, 0);
+    // Face A-B-Top (swap Top and B)
+    AddTriangle(mesh.vertices, idx, ax, ay, az, 1, 1, tx, ty, tz, 0.5f, 0, bx, by, bz, 0, 1, -0.866f, 0.5f, 0.5f);
+    // Face B-C-Top (swap Top and C)
+    AddTriangle(mesh.vertices, idx, bx, by, bz, 0, 1, tx, ty, tz, 0.5f, 0, cx, cy, cz, 1, 1, 0, 0.5f, -1);
+    // Face C-A-Top (swap Top and A)
+    AddTriangle(mesh.vertices, idx, cx, cy, cz, 0, 1, tx, ty, tz, 0.5f, 0, ax, ay, az, 1, 1, 0.866f, 0.5f, 0.5f);
     return mesh;
 }
 
@@ -525,7 +525,7 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group, 
 
             for (uint32_t i = 0; i < num_tris * 3; i++) {
                 uint32_t v_idx = tri_indices[i];
-                
+                    
                 ufbx_vec3 pos = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, v_idx);
                 ufbx_vec3 norm = ufbx_get_vertex_vec3(&ufbx_m->vertex_normal, v_idx);
                 ufbx_vec2 uv = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, v_idx);
