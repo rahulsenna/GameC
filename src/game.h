@@ -67,6 +67,9 @@ struct Uniforms
 {
   simd_float4x4 mvp_matrix;
   simd_float4x4 model_matrix;
+  simd_float3 light_dir;
+  simd_float3 light_color;
+  float ambient_intensity;
 };
 
 struct RenderGroupEntry_DrawMesh

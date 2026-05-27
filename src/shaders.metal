@@ -12,6 +12,9 @@ struct Uniforms
 {
   float4x4 mvp_matrix;
   float4x4 model_matrix;
+  float3 light_dir;
+  float3 light_color;
+  float ambient_intensity;
 };
 
 struct RasterizerData
@@ -39,18 +42,18 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
 }
 
 fragment float4 fragment_main(RasterizerData in [[stage_in]],
-                              texture2d<float> colorTexture [[texture(0)]])
+                              texture2d<float> colorTexture [[texture(0)]],
+                              constant Uniforms &uniforms [[buffer(1)]])
 {
   constexpr sampler textureSampler (mag_filter::linear, min_filter::linear);
   float4 base_color = colorTexture.sample(textureSampler, in.tex_coord);
   
-  // Simple Directional Lighting
-  float3 light_dir = normalize(float3(1.0, 1.0, -1.0));
+  // Directional Lighting from Uniforms
+  float3 light_dir = normalize(uniforms.light_dir);
   float3 normal = normalize(in.world_normal);
   
   float diffuse = max(dot(normal, light_dir), 0.0);
-  float ambient = 0.2;
   
-  float light_intensity = diffuse + ambient;
+  float3 light_intensity = (diffuse * uniforms.light_color) + uniforms.ambient_intensity;
   return float4(base_color.rgb * light_intensity, base_color.a);
 }

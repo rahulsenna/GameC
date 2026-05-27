@@ -17,13 +17,3 @@ clang++ -g -O0 \
     -dynamiclib \
     src/game.cpp src/math_utils.cpp libs/base_arena.cpp \
     -o build/game.dylib
-
-echo "Compiling Engine Code..."
-clang++ -g -O0 \
-    -std=c++14 -fno-exceptions -fno-rtti \
-    -I libs/ \
-    -framework Cocoa -framework Metal -framework QuartzCore \
-    src/osx_main.mm libs/base_arena.cpp \
-    -o build/engine
-
-echo "Build Complete! Run with ./build/engine or F5 in VSCode."

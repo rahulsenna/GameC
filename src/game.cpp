@@ -218,7 +218,12 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
   simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-  Uniforms uniforms = {mvp_matrix, model_matrix};
+  Uniforms uniforms = {};
+  uniforms.mvp_matrix = mvp_matrix;
+  uniforms.model_matrix = model_matrix;
+  uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
+  uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+  uniforms.ambient_intensity = 0.2f;
 
   PushDrawMeshCommand(&out_output->render_group, uniforms,
                       state->texture_handle, 36, cube_vertices);

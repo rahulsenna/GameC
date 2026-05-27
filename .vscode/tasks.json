@@ -12,6 +12,18 @@
       "problemMatcher": [
         "$gcc"
       ]
+    },
+    {
+      "label": "Build",
+      "type": "shell",
+      "command": "./rebuild_game_and_shader.sh",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
     }
   ]
 }

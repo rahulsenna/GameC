@@ -3,6 +3,9 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include <dlfcn.h>
+#include <sys/stat.h>
+
 static Arena *global_arena = nullptr;
 static id<MTLDevice> global_device = nil;
 static id<MTLCommandQueue> global_command_queue = nil;
@@ -13,6 +16,100 @@ static CAMetalLayer *global_metal_layer = nil;
 static NSMutableDictionary<NSNumber *, id<MTLTexture>> *global_textures = nil;
 static bool global_running = true;
 static GameInput global_input = {};
+
+// --- Game Code Loading ---
+typedef void (*GameUpdateAndRenderFunc)(Arena*, GameInput*, GameOutput*);
+
+struct GameCode {
+  void *dylib;
+  time_t last_write_time;
+  GameUpdateAndRenderFunc UpdateAndRender;
+};
+
+static GameCode global_game_code = {};
+
+static time_t GetFileWriteTime(const char *filename) {
+    struct stat file_stat;
+    if (stat(filename, &file_stat) == 0) {
+        return file_stat.st_mtimespec.tv_sec;
+    }
+    return 0;
+}
+
+static void MacUnloadGameCode() {
+    if (global_game_code.dylib) {
+        dlclose(global_game_code.dylib);
+        global_game_code.dylib = nullptr;
+    }
+    global_game_code.UpdateAndRender = nullptr;
+}
+
+static void MacLoadGameCode() {
+    MacUnloadGameCode();
+    
+    // Copy the dylib to a new path to avoid file locks
+    const char *source_path = "build/game.dylib";
+    const char *temp_path = "build/game_load.dylib";
+    
+    // Using a system command for copying is simple and handmade style
+    system("cp build/game.dylib build/game_load.dylib");
+    
+    global_game_code.dylib = dlopen(temp_path, RTLD_LAZY | RTLD_GLOBAL);
+    if (global_game_code.dylib) {
+        global_game_code.UpdateAndRender = (GameUpdateAndRenderFunc)dlsym(global_game_code.dylib, "GameUpdateAndRender");
+        global_game_code.last_write_time = GetFileWriteTime(source_path);
+        NSLog(@"Game code loaded successfully!");
+    } else {
+        NSLog(@"Failed to load game code: %s", dlerror());
+    }
+}
+
+static time_t global_shader_write_time = 0;
+
+static void MacLoadShaders() {
+    NSString *libPath = [NSString
+        stringWithFormat:@"%@/build/shaders.metallib",
+                         [[NSFileManager defaultManager] currentDirectoryPath]];
+    NSError *error = nil;
+    NSData *data = [NSData dataWithContentsOfFile:libPath];
+    if (!data) {
+        NSLog(@"Failed to read metallib file at %@", libPath);
+        return;
+    }
+    dispatch_data_t dispatchData = dispatch_data_create(data.bytes, data.length, dispatch_get_main_queue(), ^{});
+    id<MTLLibrary> defaultLibrary = [global_device newLibraryWithData:dispatchData error:&error];
+    if (!defaultLibrary)
+    {
+      NSLog(@"Failed to load metallib: %@", error);
+      return;
+    }
+
+    id<MTLFunction> vertexFunction =
+        [defaultLibrary newFunctionWithName:@"vertex_main"];
+    id<MTLFunction> fragmentFunction =
+        [defaultLibrary newFunctionWithName:@"fragment_main"];
+
+    MTLRenderPipelineDescriptor *pipelineStateDescriptor =
+        [[MTLRenderPipelineDescriptor alloc] init];
+    pipelineStateDescriptor.label = @"Simple Pipeline";
+    pipelineStateDescriptor.vertexFunction = vertexFunction;
+    pipelineStateDescriptor.fragmentFunction = fragmentFunction;
+    pipelineStateDescriptor.colorAttachments[0].pixelFormat =
+        MTLPixelFormatBGRA8Unorm;
+    pipelineStateDescriptor.depthAttachmentPixelFormat =
+        MTLPixelFormatDepth32Float;
+
+    global_pipeline_state = [global_device
+        newRenderPipelineStateWithDescriptor:pipelineStateDescriptor
+                                       error:&error];
+    if (!global_pipeline_state)
+    {
+      NSLog(@"Failed to create pipeline state: %@", error);
+    } else {
+      NSLog(@"Shaders loaded successfully!");
+      global_shader_write_time = GetFileWriteTime("build/shaders.metallib");
+    }
+}
 
 // Window Delegate
 @interface MainWindowDelegate : NSObject <NSWindowDelegate>
@@ -119,7 +216,9 @@ static void RenderFrame()
     output.render_group.max_size = sizeof(render_buffer);
 
     // Run game logic with input
-    GameUpdateAndRender(global_arena, &global_input, &output);
+    if (global_game_code.UpdateAndRender) {
+      global_game_code.UpdateAndRender(global_arena, &global_input, &output);
+    }
 
     // --- Parse Render Group ---
     MTLClearColor clear_color = MTLClearColorMake(0, 0, 0, 1);
@@ -229,6 +328,9 @@ static void RenderFrame()
         [commandEncoder setVertexBytes:&entry->uniforms
                                 length:sizeof(Uniforms)
                                atIndex:1];
+        [commandEncoder setFragmentBytes:&entry->uniforms
+                                  length:sizeof(Uniforms)
+                                 atIndex:1];
         [commandEncoder setVertexBytes:vertices
                                 length:sizeof(Vertex) * entry->vertex_count
                                atIndex:0];
@@ -251,6 +353,8 @@ int main(int argc, const char *argv[])
 {
   @autoreleasepool
   {
+    MacLoadGameCode();
+
     global_arena = ArenaAlloc(1ull << 30, 1ull << 25);
     global_device = MTLCreateSystemDefaultDevice();
     global_command_queue = [global_device newCommandQueue];
@@ -265,41 +369,9 @@ int main(int argc, const char *argv[])
         [global_device newDepthStencilStateWithDescriptor:depthDesc];
 
     // Load Shaders
-    NSString *libPath = [NSString
-        stringWithFormat:@"%@/build/shaders.metallib",
-                         [[NSFileManager defaultManager] currentDirectoryPath]];
-    NSError *error = nil;
-    id<MTLLibrary> defaultLibrary =
-        [global_device newLibraryWithURL:[NSURL fileURLWithPath:libPath]
-                                   error:&error];
-    if (!defaultLibrary)
-    {
-      NSLog(@"Failed to load metallib: %@", error);
-      return 1;
-    }
-
-    id<MTLFunction> vertexFunction =
-        [defaultLibrary newFunctionWithName:@"vertex_main"];
-    id<MTLFunction> fragmentFunction =
-        [defaultLibrary newFunctionWithName:@"fragment_main"];
-
-    MTLRenderPipelineDescriptor *pipelineStateDescriptor =
-        [[MTLRenderPipelineDescriptor alloc] init];
-    pipelineStateDescriptor.label = @"Simple Pipeline";
-    pipelineStateDescriptor.vertexFunction = vertexFunction;
-    pipelineStateDescriptor.fragmentFunction = fragmentFunction;
-    pipelineStateDescriptor.colorAttachments[0].pixelFormat =
-        MTLPixelFormatBGRA8Unorm;
-    pipelineStateDescriptor.depthAttachmentPixelFormat =
-        MTLPixelFormatDepth32Float;
-
-    global_pipeline_state = [global_device
-        newRenderPipelineStateWithDescriptor:pipelineStateDescriptor
-                                       error:&error];
-    if (!global_pipeline_state)
-    {
-      NSLog(@"Failed to create pipeline state: %@", error);
-      return 1;
+    MacLoadShaders();
+    if (!global_pipeline_state) {
+        return 1;
     }
 
     [NSApplication sharedApplication];
@@ -331,6 +403,17 @@ int main(int argc, const char *argv[])
 
     while (global_running)
     {
+      // --- Hot Reload Checks ---
+      time_t new_game_time = GetFileWriteTime("build/game.dylib");
+      if (new_game_time != 0 && new_game_time != global_game_code.last_write_time) {
+          MacLoadGameCode();
+      }
+
+      time_t new_shader_time = GetFileWriteTime("build/shaders.metallib");
+      if (new_shader_time != 0 && new_shader_time != global_shader_write_time) {
+          MacLoadShaders();
+      }
+
       NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                           untilDate:[NSDate distantPast]
                                              inMode:NSDefaultRunLoopMode
