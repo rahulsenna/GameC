@@ -31,8 +31,10 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
   U32 pixel_data_size = width * height * 4;
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_UploadTexture) + pixel_data_size;
-  if (group->size + total_size > group->max_size) {
-      printf("ASSERT FAILURE: size=%u, total_size=%u, max_size=%u, w=%u, h=%u\n", group->size, total_size, group->max_size, width, height);
+  if (group->size + total_size > group->max_size)
+  {
+    printf("ASSERT FAILURE: size=%u, total_size=%u, max_size=%u, w=%u, h=%u\n",
+           group->size, total_size, group->max_size, width, height);
   }
   Assert(group->size + total_size <= group->max_size);
 
@@ -56,7 +58,8 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
 }
 
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 texture_handle, U32 shader_type, U32 vertex_count, Vertex *vertices)
+                         U32 texture_handle, U32 shader_type, U32 vertex_count,
+                         Vertex *vertices)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_DrawMesh) +
@@ -106,15 +109,16 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     // Load texture
     int width, height, channels;
     stbi_set_flip_vertically_on_load(true);
-    unsigned char *data = stbi_load("assets/CustomUVChecker_byValle_1K.png", &width, &height,
-                                    &channels, 4); // Force RGBA
+    unsigned char *data =
+        stbi_load("assets/CustomUVChecker_byValle_1K.png", &width, &height,
+                  &channels, 4); // Force RGBA
     if (data)
     {
       PushUploadTextureCommand(&out_output->render_group, state->texture_handle,
                                width, height, data);
       stbi_image_free(data);
     }
-    
+
     // Generate Shapes
     state->shapes[0] = CreateSphere(arena);
     state->shapes[1] = CreateTorus(arena);
@@ -126,9 +130,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->shapes[7] = CreateSquarePyramid(arena);
     state->shapes[8] = CreateTriangularPrism(arena);
     state->shapes[9] = CreatePlane(arena, 1000.0f);
-    
+
     U32 next_tex_handle = 100;
-    state->fbx_model = LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group, &next_tex_handle);
+    state->fbx_model = LoadFBX(arena, "assets/Sophie.fbx",
+                               &out_output->render_group, &next_tex_handle);
   }
 
   float dt = 0.016f;
@@ -187,113 +192,112 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   // 1. Draw Infinite Grid Plane
   {
-      simd_float4x4 model_matrix = simd_matrix(
-          simd_make_float4(1, 0, 0, 0),
-          simd_make_float4(0, 1, 0, 0),
-          simd_make_float4(0, 0, 1, 0),
-          simd_make_float4(0, -0.5f, 0, 1) // Set plane to ground level (-0.5 is the exact bottom bound for most of our shapes)
-      );
-      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    simd_float4x4 model_matrix = simd_matrix(
+        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+        simd_make_float4(0, 0, 1, 0),
+        simd_make_float4(0, -0.5f, 0,
+                         1) // Set plane to ground level (-0.5 is the exact
+                            // bottom bound for most of our shapes)
+    );
+    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-      Uniforms uniforms = {};
-      uniforms.mvp_matrix = mvp_matrix;
-      uniforms.model_matrix = model_matrix;
-      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
-      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-      uniforms.camera_pos = state->camera.position;
-      uniforms.ambient_intensity = 0.2f;
+    Uniforms uniforms = {};
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
+    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+    uniforms.camera_pos = state->camera.position;
+    uniforms.ambient_intensity = 0.2f;
 
-      PushDrawMeshCommand(&out_output->render_group, uniforms,
-                          state->texture_handle, 1, state->shapes[9].vertex_count, state->shapes[9].vertices);
+    PushDrawMeshCommand(&out_output->render_group, uniforms,
+                        state->texture_handle, 1, state->shapes[9].vertex_count,
+                        state->shapes[9].vertices);
   }
 
   // 2. Draw 9 Shapes
   float shape_y_offsets[9] = {
-      0.0f,    // 0: Sphere (bottom at -0.5)
-      -0.3f,   // 1: Torus (bottom at -0.2 -> needs to move down 0.3 to rest at -0.5)
-      0.0f,    // 2: Cylinder (bottom at -0.5)
-      0.0f,    // 3: Cone (bottom at -0.5)
-      0.0f,    // 4: Cube (bottom at -0.5)
-      -0.25f,  // 5: Cuboid (height 0.5 -> bottom at -0.25 -> needs to move down 0.25 to rest at -0.5)
-      0.0f,    // 6: TriangularPyramid (bottom at -0.5)
-      0.0f,    // 7: SquarePyramid (bottom at -0.5)
-      0.0f     // 8: TriangularPrism (bottom at -0.5)
+      0.0f,   // 0: Sphere (bottom at -0.5)
+      -0.3f,  // 1: Torus (bottom at -0.2 -> needs to move down 0.3 to rest at
+              // -0.5)
+      0.0f,   // 2: Cylinder (bottom at -0.5)
+      0.0f,   // 3: Cone (bottom at -0.5)
+      0.0f,   // 4: Cube (bottom at -0.5)
+      -0.25f, // 5: Cuboid (height 0.5 -> bottom at -0.25 -> needs to move down
+              // 0.25 to rest at -0.5)
+      0.0f,   // 6: TriangularPyramid (bottom at -0.5)
+      0.0f,   // 7: SquarePyramid (bottom at -0.5)
+      0.0f    // 8: TriangularPrism (bottom at -0.5)
   };
 
   for (int i = 0; i < 9; ++i)
   {
-      float x = (i % 3) * 2.5f - 2.5f;
-      float z = (i / 3) * 2.5f - 2.5f;
-      float y = shape_y_offsets[i];
-      simd_float4x4 trans_matrix =
-          simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                      simd_make_float4(0, 0, 1, 0), simd_make_float4(x, y, z, 1));
+    float x = (i % 3) * 2.5f - 2.5f;
+    float z = (i / 3) * 2.5f - 2.5f;
+    float y = shape_y_offsets[i];
+    simd_float4x4 trans_matrix =
+        simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+                    simd_make_float4(0, 0, 1, 0), simd_make_float4(x, y, z, 1));
 
-      float angle = state->time * 0.5f + i;
-      simd_float4x4 rot_y = simd_matrix(
-          simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
-          simd_make_float4(0, 1, 0, 0),
-          simd_make_float4(sinf(angle), 0, cosf(angle), 0),
-          simd_make_float4(0, 0, 0, 1)
-      );
-      
-      simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
-      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    float angle = state->time * 0.5f + i;
+    simd_float4x4 rot_y =
+        simd_matrix(simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
+                    simd_make_float4(0, 1, 0, 0),
+                    simd_make_float4(sinf(angle), 0, cosf(angle), 0),
+                    simd_make_float4(0, 0, 0, 1));
 
-      Uniforms uniforms = {};
-      uniforms.mvp_matrix = mvp_matrix;
-      uniforms.model_matrix = model_matrix;
-      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
-      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-      uniforms.camera_pos = state->camera.position;
-      uniforms.ambient_intensity = 0.2f;
+    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
+    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-      PushDrawMeshCommand(&out_output->render_group, uniforms,
-                          state->texture_handle, 0, state->shapes[i].vertex_count, state->shapes[i].vertices);
+    Uniforms uniforms = {};
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
+    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+    uniforms.camera_pos = state->camera.position;
+    uniforms.ambient_intensity = 0.2f;
+
+    PushDrawMeshCommand(&out_output->render_group, uniforms,
+                        state->texture_handle, 0, state->shapes[i].vertex_count,
+                        state->shapes[i].vertices);
   }
 
   // 3. Draw FBX Model in front of the shapes (closer to camera)
   {
-      simd_float4x4 trans_matrix =
-          simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                      simd_make_float4(0, 0, 1, 0), simd_make_float4(0, -0.5f, -2.5f, 1));
-      
-      simd_float4x4 rot_y = simd_matrix(
-          simd_make_float4(1, 0, 0, 0),
-          simd_make_float4(0, 1, 0, 0),
-          simd_make_float4(0, 0, 1, 0),
-          simd_make_float4(0, 0, 0, 1)
-      );
+    simd_float4x4 trans_matrix = simd_matrix(
+        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+        simd_make_float4(0, 0, 1, 0), simd_make_float4(0, -0.5f, -2.5f, 1));
 
-      // Scale it down (often FBX files are in cm)
-      float s = 0.01f;
-      simd_float4x4 scale_matrix = simd_matrix(
-          simd_make_float4(s, 0, 0, 0),
-          simd_make_float4(0, s, 0, 0),
-          simd_make_float4(0, 0, s, 0),
-          simd_make_float4(0, 0, 0, 1)
-      );
+    simd_float4x4 rot_y =
+        simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+                    simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 0, 0, 1));
 
-      simd_float4x4 rot_scale = simd_mul(rot_y, scale_matrix);
-      simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_scale);
-      simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    // Scale it down (often FBX files are in cm)
+    float s = 0.01f;
+    simd_float4x4 scale_matrix =
+        simd_matrix(simd_make_float4(s, 0, 0, 0), simd_make_float4(0, s, 0, 0),
+                    simd_make_float4(0, 0, s, 0), simd_make_float4(0, 0, 0, 1));
 
-      Uniforms uniforms = {};
-      uniforms.mvp_matrix = mvp_matrix;
-      uniforms.model_matrix = model_matrix;
-      uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
-      uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-      uniforms.camera_pos = state->camera.position;
-      uniforms.ambient_intensity = 0.2f;
+    simd_float4x4 rot_scale = simd_mul(rot_y, scale_matrix);
+    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_scale);
+    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-      for (U32 n = 0; n < state->fbx_model.num_nodes; n++)
+    Uniforms uniforms = {};
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
+    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+    uniforms.camera_pos = state->camera.position;
+    uniforms.ambient_intensity = 0.2f;
+
+    for (U32 n = 0; n < state->fbx_model.num_nodes; n++)
+    {
+      FBXNode *node = &state->fbx_model.nodes[n];
+      if (node->vertex_count > 0)
       {
-          FBXNode *node = &state->fbx_model.nodes[n];
-          if (node->vertex_count > 0)
-          {
-              PushDrawMeshCommand(&out_output->render_group, uniforms,
-                                  node->texture_handle, 0, node->vertex_count, node->vertices);
-          }
+        PushDrawMeshCommand(&out_output->render_group, uniforms,
+                            node->texture_handle, 0, node->vertex_count,
+                            node->vertices);
       }
+    }
   }
 }
