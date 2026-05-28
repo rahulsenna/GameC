@@ -13,7 +13,7 @@ build_shaders() {
 build_game() {
     echo "Compiling Game Code..."
     clang++ -g -O0 \
-        -std=c++14 -fno-exceptions -fno-rtti \
+        -std=c++17 -fno-exceptions -fno-rtti \
         -Wno-deprecated \
         -I libs/ \
         -dynamiclib \
@@ -24,10 +24,10 @@ build_game() {
 build_engine() {
     echo "Compiling Engine Code..."
     clang++ -g -O0 \
-        -std=c++14 -fno-exceptions -fno-rtti \
+        -std=c++17 -fno-exceptions -fno-rtti \
         -I libs/ \
         -framework Cocoa -framework Metal -framework QuartzCore \
-        src/osx_main.mm libs/base_arena.cpp \
+        src/osx_main.mm src/renderer.cpp libs/base_arena.cpp \
         -o build/engine
 }
 
