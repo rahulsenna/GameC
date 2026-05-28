@@ -25,6 +25,7 @@ struct Vertex
 {
   simd_float3 position;
   simd_float3 normal;
+  simd_float3 tangent;
   simd_float2 tex_coord;
 };
 
@@ -34,11 +35,20 @@ struct MeshData
   Vertex *vertices;
 };
 
+struct MaterialTextures
+{
+  U32 albedo;
+  U32 normal;
+  U32 metallic;
+  U32 roughness;
+  U32 ao;
+};
+
 struct FBXNode
 {
   U32 vertex_count;
   Vertex *vertices;
-  U32 texture_handle;
+  MaterialTextures textures;
 };
 
 struct FBXModel
@@ -51,10 +61,12 @@ struct GameState
 {
   B32 is_initialized;
   F32 time;
-  U32 texture_handle;
+  MaterialTextures default_textures;
+  MaterialTextures alien_textures;
   Camera camera;
   MeshData shapes[10]; // Back to 10 for procedurals
   FBXModel fbx_model;
+  FBXModel banana_model;
 };
 
 // -- Render Command Structures --
@@ -99,7 +111,7 @@ struct Uniforms
 struct RenderGroupEntry_DrawMesh
 {
   Uniforms uniforms;
-  U32 texture_handle;
+  MaterialTextures textures;
   U32 shader_type;
   U32 vertex_count;
   // Note: Vertices array is stored immediately following this struct in memory!
@@ -116,8 +128,8 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
 void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
                               U32 height, void *pixels);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 texture_handle, U32 shader_type, U32 vertex_count,
-                         Vertex *vertices);
+                         MaterialTextures textures, U32 shader_type,
+                         U32 vertex_count, Vertex *vertices);
 
 // -- Game Output --
 

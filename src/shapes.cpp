@@ -7,9 +7,29 @@
 #include <string.h>
 
 static void AddVertex(Vertex *vertices, U32 &index, float px, float py,
-                      float pz, float nx, float ny, float nz, float u, float v)
+                      float pz, float nx, float ny, float nz, float u, float v,
+                      float tx = 0.0f, float ty = 0.0f, float tz = 0.0f)
 {
-  vertices[index++] = {{px, py, pz}, {nx, ny, nz}, {u, v}};
+  if (tx == 0.0f && ty == 0.0f && tz == 0.0f)
+  {
+    if (fabsf(ny) > 0.999f)
+    {
+      tx = 1.0f;
+      ty = 0.0f;
+      tz = 0.0f;
+    }
+    else
+    {
+      tx = nz;
+      ty = 0.0f;
+      tz = -nx;
+      float l = sqrtf(tx * tx + ty * ty + tz * tz);
+      tx /= l;
+      ty /= l;
+      tz /= l;
+    }
+  }
+  vertices[index++] = {{px, py, pz}, {nx, ny, nz}, {tx, ty, tz}, {u, v}};
 }
 
 static void AddTriangle(Vertex *vertices, U32 &index, float p1x, float p1y,
@@ -415,7 +435,7 @@ MeshData CreatePlane(Arena *arena, float size)
 }
 
 FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
-                 U32 *next_texture_handle)
+                 U32 *next_texture_handle, MaterialTextures default_textures)
 {
   FBXModel model = {};
   model.num_nodes = 0;
@@ -453,7 +473,7 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
     FBXNode node = {};
 
     // --- 1. Find Texture ---
-    node.texture_handle = 1; // Default to checkerboard
+    node.textures = default_textures;
 
     if (ufbx_m->materials.count > 0)
     {
@@ -461,8 +481,26 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
       for (size_t tex_i = 0; tex_i < mat->textures.count; tex_i++)
       {
         ufbx_material_texture mat_tex = mat->textures.data[tex_i];
-        if (strcmp(mat_tex.material_prop.data, "DiffuseColor") == 0 ||
-            strcmp(mat_tex.material_prop.data, "base_color") == 0)
+
+        bool is_albedo =
+            strcmp(mat_tex.material_prop.data, "DiffuseColor") == 0 ||
+            strcmp(mat_tex.material_prop.data, "base_color") == 0;
+        bool is_normal =
+            strcmp(mat_tex.material_prop.data, "NormalMap") == 0 ||
+            strcmp(mat_tex.material_prop.data, "normal_map") == 0 ||
+            strcmp(mat_tex.material_prop.data, "Bump") == 0;
+        bool is_metallic =
+            strcmp(mat_tex.material_prop.data, "metalness") == 0 ||
+            strcmp(mat_tex.material_prop.data, "metallic") == 0;
+        bool is_roughness =
+            strcmp(mat_tex.material_prop.data, "Shininess") == 0 ||
+            strcmp(mat_tex.material_prop.data, "ShininessExponent") == 0 ||
+            strcmp(mat_tex.material_prop.data, "roughness") == 0;
+        bool is_ao =
+            strcmp(mat_tex.material_prop.data, "AmbientColor") == 0 ||
+            strcmp(mat_tex.material_prop.data, "ambient_occlusion") == 0;
+
+        if (is_albedo || is_normal || is_metallic || is_roughness || is_ao)
         {
 
           ufbx_texture *tex = mat_tex.texture;
@@ -479,11 +517,8 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
               }
             }
 
-            if (cached_handle != 0)
-            {
-              node.texture_handle = cached_handle;
-            }
-            else
+            U32 final_handle = cached_handle;
+            if (cached_handle == 0)
             {
               int width, height, channels;
               unsigned char *pixels = stbi_load_from_memory(
@@ -492,15 +527,39 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
 
               if (pixels)
               {
-                node.texture_handle = (*next_texture_handle)++;
-                PushUploadTextureCommand(render_group, node.texture_handle,
-                                         width, height, pixels);
+                if (is_roughness && strcmp(mat_tex.material_prop.data,
+                                           "ShininessExponent") == 0)
+                {
+                  for (int i = 0; i < width * height * 4; i += 4)
+                  {
+                    pixels[i] = 255 - pixels[i];         // R
+                    pixels[i + 1] = 255 - pixels[i + 1]; // G
+                    pixels[i + 2] = 255 - pixels[i + 2]; // B
+                  }
+                }
+                final_handle = (*next_texture_handle)++;
+                PushUploadTextureCommand(render_group, final_handle, width,
+                                         height, pixels);
                 stbi_image_free(pixels);
 
                 loaded_tex[num_loaded_tex].data = tex->content.data;
-                loaded_tex[num_loaded_tex].handle = node.texture_handle;
+                loaded_tex[num_loaded_tex].handle = final_handle;
                 num_loaded_tex++;
               }
+            }
+
+            if (final_handle != 0)
+            {
+              if (is_albedo)
+                node.textures.albedo = final_handle;
+              else if (is_normal)
+                node.textures.normal = final_handle;
+              else if (is_metallic)
+                node.textures.metallic = final_handle;
+              else if (is_roughness)
+                node.textures.roughness = final_handle;
+              else if (is_ao)
+                node.textures.ao = final_handle;
             }
           }
         }
@@ -528,16 +587,72 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
       uint32_t num_tris = ufbx_triangulate_face(
           tri_indices, ufbx_m->max_face_triangles * 3, ufbx_m, face);
 
-      for (uint32_t i = 0; i < num_tris * 3; i++)
+      for (uint32_t i = 0; i < num_tris * 3; i += 3)
       {
-        uint32_t v_idx = tri_indices[i];
+        uint32_t i0 = tri_indices[i];
+        uint32_t i1 = tri_indices[i + 1];
+        uint32_t i2 = tri_indices[i + 2];
 
-        ufbx_vec3 pos = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, v_idx);
-        ufbx_vec3 norm = ufbx_get_vertex_vec3(&ufbx_m->vertex_normal, v_idx);
-        ufbx_vec2 uv = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, v_idx);
+        ufbx_vec3 p0 = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, i0);
+        ufbx_vec3 p1 = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, i1);
+        ufbx_vec3 p2 = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, i2);
 
-        AddVertex(node.vertices, idx, pos.x, pos.y, pos.z, norm.x, norm.y,
-                  norm.z, uv.x, uv.y);
+        ufbx_vec2 uv0 = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, i0);
+        ufbx_vec2 uv1 = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, i1);
+        ufbx_vec2 uv2 = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, i2);
+
+        float dx1 = p1.x - p0.x;
+        float dy1 = p1.y - p0.y;
+        float dz1 = p1.z - p0.z;
+        float dx2 = p2.x - p0.x;
+        float dy2 = p2.y - p0.y;
+        float dz2 = p2.z - p0.z;
+
+        float du1 = uv1.x - uv0.x;
+        float dv1 = uv1.y - uv0.y;
+        float du2 = uv2.x - uv0.x;
+        float dv2 = uv2.y - uv0.y;
+
+        float r = 1.0f / (du1 * dv2 - dv1 * du2);
+        float tx = (dv2 * dx1 - dv1 * dx2) * r;
+        float ty = (dv2 * dy1 - dv1 * dy2) * r;
+        float tz = (dv2 * dz1 - dv1 * dz2) * r;
+
+        if (isnan(tx) || isinf(tx))
+        {
+          tx = 1.0f;
+          ty = 0.0f;
+          tz = 0.0f;
+        }
+
+        for (int v = 0; v < 3; v++)
+        {
+          uint32_t v_idx = tri_indices[i + v];
+          ufbx_vec3 pos = ufbx_get_vertex_vec3(&ufbx_m->vertex_position, v_idx);
+          ufbx_vec3 norm = ufbx_get_vertex_vec3(&ufbx_m->vertex_normal, v_idx);
+          ufbx_vec2 uv = ufbx_get_vertex_vec2(&ufbx_m->vertex_uv, v_idx);
+
+          float dot_nt = norm.x * tx + norm.y * ty + norm.z * tz;
+          float t_x = tx - dot_nt * norm.x;
+          float t_y = ty - dot_nt * norm.y;
+          float t_z = tz - dot_nt * norm.z;
+          float len = sqrtf(t_x * t_x + t_y * t_y + t_z * t_z);
+          if (len > 0.0001f)
+          {
+            t_x /= len;
+            t_y /= len;
+            t_z /= len;
+          }
+          else
+          {
+            t_x = 1.0f;
+            t_y = 0.0f;
+            t_z = 0.0f;
+          }
+
+          AddVertex(node.vertices, idx, pos.x, pos.y, pos.z, norm.x, norm.y,
+                    norm.z, uv.x, uv.y, t_x, t_y, t_z);
+        }
       }
     }
     free(tri_indices);

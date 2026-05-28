@@ -14,6 +14,7 @@ build_game() {
     echo "Compiling Game Code..."
     clang++ -g -O0 \
         -std=c++14 -fno-exceptions -fno-rtti \
+        -Wno-deprecated \
         -I libs/ \
         -dynamiclib \
         src/game.cpp src/math_utils.cpp libs/base_arena.cpp src/shapes.cpp libs/ufbx.c \

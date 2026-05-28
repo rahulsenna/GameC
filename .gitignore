@@ -1,1 +1,4 @@
 build/**
+**utilities/build/
+.gemini/**
+**.DS_Store**

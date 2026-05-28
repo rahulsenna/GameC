@@ -21,4 +21,4 @@ MeshData CreateTriangularPrism(Arena *arena, float width = 1.0f,
                                float height = 1.0f, float depth = 1.0f);
 MeshData CreatePlane(Arena *arena, float size = 1000.0f);
 FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
-                 U32 *next_texture_handle);
+                 U32 *next_texture_handle, MaterialTextures default_textures);

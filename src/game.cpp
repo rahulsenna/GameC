@@ -2,6 +2,7 @@
 #include "math_utils.h"
 #include "shapes.h"
 #include <math.h>
+#include <simd/simd.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -58,8 +59,8 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
 }
 
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         U32 texture_handle, U32 shader_type, U32 vertex_count,
-                         Vertex *vertices)
+                         MaterialTextures textures, U32 shader_type,
+                         U32 vertex_count, Vertex *vertices)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_DrawMesh) +
@@ -72,7 +73,7 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
 
   RenderGroupEntry_DrawMesh *entry = (RenderGroupEntry_DrawMesh *)(header + 1);
   entry->uniforms = uniforms;
-  entry->texture_handle = texture_handle;
+  entry->textures = textures;
   entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
 
@@ -83,6 +84,23 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   }
 
   group->size += total_size;
+}
+
+U32 LoadTexture(const char *path, RenderGroup *render_group,
+                U32 *next_tex_handle)
+{
+  int width, height, channels;
+  stbi_set_flip_vertically_on_load(true);
+  unsigned char *data = stbi_load(path, &width, &height, &channels, 4);
+  if (data)
+  {
+    U32 handle = (*next_tex_handle)++;
+    PushUploadTextureCommand(render_group, handle, width, height, data);
+    stbi_image_free(data);
+    return handle;
+  }
+  printf("Failed to load texture: %s\n", path);
+  return 0;
 }
 
 extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
@@ -100,7 +118,37 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   {
     state->is_initialized = 1;
     state->time = 0.0f;
-    state->texture_handle = 1;
+    U32 next_tex_handle = 1;
+
+    // Default textures
+    U32 default_albedo = next_tex_handle++;
+    U32 white_pixel = 0xFFFFFFFF;
+    PushUploadTextureCommand(&out_output->render_group, default_albedo, 1, 1,
+                             &white_pixel);
+
+    U32 default_normal = next_tex_handle++;
+    U32 flat_normal_pixel = 0xFFFF8080; // A=255, B=255, G=128, R=128
+    PushUploadTextureCommand(&out_output->render_group, default_normal, 1, 1,
+                             &flat_normal_pixel);
+
+    U32 default_metallic = next_tex_handle++;
+    U32 black_pixel = 0xFF000000;
+    PushUploadTextureCommand(&out_output->render_group, default_metallic, 1, 1,
+                             &black_pixel);
+
+    U32 default_roughness = next_tex_handle++;
+    PushUploadTextureCommand(&out_output->render_group, default_roughness, 1, 1,
+                             &white_pixel);
+
+    U32 default_ao = next_tex_handle++;
+    PushUploadTextureCommand(&out_output->render_group, default_ao, 1, 1,
+                             &white_pixel);
+
+    state->default_textures.albedo = default_albedo;
+    state->default_textures.normal = default_normal;
+    state->default_textures.metallic = default_metallic;
+    state->default_textures.roughness = default_roughness;
+    state->default_textures.ao = default_ao;
 
     state->camera.position = simd_make_float3(0.0f, 2.0f, 5.0f);
     state->camera.yaw = -90.0f; // Look down -Z
@@ -114,8 +162,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
                   &channels, 4); // Force RGBA
     if (data)
     {
-      PushUploadTextureCommand(&out_output->render_group, state->texture_handle,
-                               width, height, data);
+      state->default_textures.albedo = next_tex_handle++;
+      PushUploadTextureCommand(&out_output->render_group,
+                               state->default_textures.albedo, width, height,
+                               data);
       stbi_image_free(data);
     }
 
@@ -131,9 +181,29 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->shapes[8] = CreateTriangularPrism(arena);
     state->shapes[9] = CreatePlane(arena, 1000.0f);
 
-    U32 next_tex_handle = 100;
-    state->fbx_model = LoadFBX(arena, "assets/Sophie.fbx",
-                               &out_output->render_group, &next_tex_handle);
+    state->fbx_model =
+        LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group,
+                &next_tex_handle, state->default_textures);
+
+    state->banana_model =
+        LoadFBX(arena, "assets/banana_leaves.fbx", &out_output->render_group,
+                &next_tex_handle, state->default_textures);
+
+    state->alien_textures.albedo =
+        LoadTexture("assets/alien-panels-bl/alien-panels_albedo.png",
+                    &out_output->render_group, &next_tex_handle);
+    state->alien_textures.normal =
+        LoadTexture("assets/alien-panels-bl/alien-panels_normal-ogl.png",
+                    &out_output->render_group, &next_tex_handle);
+    state->alien_textures.metallic =
+        LoadTexture("assets/alien-panels-bl/alien-panels_metallic.png",
+                    &out_output->render_group, &next_tex_handle);
+    state->alien_textures.roughness =
+        LoadTexture("assets/alien-panels-bl/alien-panels_roughness.png",
+                    &out_output->render_group, &next_tex_handle);
+    state->alien_textures.ao =
+        LoadTexture("assets/alien-panels-bl/alien-panels_ao.png",
+                    &out_output->render_group, &next_tex_handle);
   }
 
   float dt = 0.016f;
@@ -190,6 +260,13 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
 
+  // --- Common Scene Uniforms ---
+  Uniforms base_uniforms = {};
+  base_uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
+  base_uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+  base_uniforms.camera_pos = state->camera.position;
+  base_uniforms.ambient_intensity = 0.2f;
+
   // 1. Draw Infinite Grid Plane
   {
     simd_float4x4 model_matrix = simd_matrix(
@@ -201,17 +278,13 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     );
     simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-    Uniforms uniforms = {};
+    Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
-    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
-    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-    uniforms.camera_pos = state->camera.position;
-    uniforms.ambient_intensity = 0.2f;
 
-    PushDrawMeshCommand(&out_output->render_group, uniforms,
-                        state->texture_handle, 1, state->shapes[9].vertex_count,
-                        state->shapes[9].vertices);
+    PushDrawMeshCommand(
+        &out_output->render_group, uniforms, state->default_textures, 1,
+        state->shapes[9].vertex_count, state->shapes[9].vertices);
   }
 
   // 2. Draw 9 Shapes
@@ -248,17 +321,13 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
     simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-    Uniforms uniforms = {};
+    Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
-    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, -1.0f));
-    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-    uniforms.camera_pos = state->camera.position;
-    uniforms.ambient_intensity = 0.2f;
 
-    PushDrawMeshCommand(&out_output->render_group, uniforms,
-                        state->texture_handle, 0, state->shapes[i].vertex_count,
-                        state->shapes[i].vertices);
+    PushDrawMeshCommand(
+        &out_output->render_group, uniforms, state->default_textures, 0,
+        state->shapes[i].vertex_count, state->shapes[i].vertices);
   }
 
   // 3. Draw FBX Model in front of the shapes (closer to camera)
@@ -281,22 +350,72 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_scale);
     simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
 
-    Uniforms uniforms = {};
+    Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
-    uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
-    uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
-    uniforms.camera_pos = state->camera.position;
-    uniforms.ambient_intensity = 0.2f;
 
     for (U32 n = 0; n < state->fbx_model.num_nodes; n++)
     {
       FBXNode *node = &state->fbx_model.nodes[n];
       if (node->vertex_count > 0)
       {
-        PushDrawMeshCommand(&out_output->render_group, uniforms,
-                            node->texture_handle, 0, node->vertex_count,
-                            node->vertices);
+        PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
+                            0, node->vertex_count, node->vertices);
+      }
+    }
+  }
+
+  // 4. Draw Alien PBR Sphere in front of camera
+  {
+    simd_float4x4 trans_matrix = simd_matrix(
+        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+        simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 2.0f, 3.0f, 1));
+
+    // Rotate slowly over time
+    float angle = state->time * 0.2f;
+    simd_float4x4 rot_y =
+        simd_matrix(simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
+                    simd_make_float4(0, 1, 0, 0),
+                    simd_make_float4(sinf(angle), 0, cosf(angle), 0),
+                    simd_make_float4(0, 0, 0, 1));
+
+    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
+    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+    Uniforms uniforms = base_uniforms;
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+
+    PushDrawMeshCommand(&out_output->render_group, uniforms,
+                        state->alien_textures, 0, state->shapes[0].vertex_count,
+                        state->shapes[0].vertices); // 0 is sphere
+  }
+
+  // 5. Draw Banana in front of camera on the ground
+  {
+    simd_float4x4 trans_matrix = simd_matrix(
+        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
+        simd_make_float4(0, 0, 1, 0), simd_make_float4(-2.f, -0.5f, -1.0f, 1));
+
+    float s = 1.f;
+    simd_float4x4 scale_matrix =
+        simd_matrix(simd_make_float4(s, 0, 0, 0), simd_make_float4(0, s, 0, 0),
+                    simd_make_float4(0, 0, s, 0), simd_make_float4(0, 0, 0, 1));
+
+    simd_float4x4 model_matrix = simd_mul(trans_matrix, scale_matrix);
+    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+
+    Uniforms uniforms = base_uniforms;
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+
+    for (U32 n = 0; n < state->banana_model.num_nodes; n++)
+    {
+      FBXNode *node = &state->banana_model.nodes[n];
+      if (node->vertex_count > 0)
+      {
+        PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
+                            0, node->vertex_count, node->vertices);
       }
     }
   }

@@ -109,12 +109,27 @@ static void MacLoadShaders()
   MTLRenderPipelineDescriptor *pipelineStateDescriptor =
       [[MTLRenderPipelineDescriptor alloc] init];
   pipelineStateDescriptor.label = @"Simple Pipeline";
+
   pipelineStateDescriptor.vertexFunction = vertexFunction;
   pipelineStateDescriptor.fragmentFunction = fragmentFunction;
   pipelineStateDescriptor.colorAttachments[0].pixelFormat =
       MTLPixelFormatBGRA8Unorm;
   pipelineStateDescriptor.depthAttachmentPixelFormat =
       MTLPixelFormatDepth32Float;
+
+  pipelineStateDescriptor.colorAttachments[0].blendingEnabled = YES;
+  pipelineStateDescriptor.colorAttachments[0].rgbBlendOperation =
+      MTLBlendOperationAdd;
+  pipelineStateDescriptor.colorAttachments[0].alphaBlendOperation =
+      MTLBlendOperationAdd;
+  pipelineStateDescriptor.colorAttachments[0].sourceRGBBlendFactor =
+      MTLBlendFactorSourceAlpha;
+  pipelineStateDescriptor.colorAttachments[0].sourceAlphaBlendFactor =
+      MTLBlendFactorSourceAlpha;
+  pipelineStateDescriptor.colorAttachments[0].destinationRGBBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+  pipelineStateDescriptor.colorAttachments[0].destinationAlphaBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
 
   global_pipeline_state = [global_device
       newRenderPipelineStateWithDescriptor:pipelineStateDescriptor
@@ -258,11 +273,11 @@ static void RenderFrame()
     UpdateDepthTexture(
         CGSizeMake(drawable.texture.width, drawable.texture.height));
 
-    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 256);
+    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 1024);
     GameOutput output = {};
     output.render_group.base = render_buffer;
     output.render_group.size = 0;
-    output.render_group.max_size = 1024 * 1024 * 256;
+    output.render_group.max_size = 1024 * 1024 * 1024;
 
     // Run game logic with input
     if (global_game_code.UpdateAndRender)
@@ -301,6 +316,10 @@ static void RenderFrame()
         textureDesc.width = entry->width;
         textureDesc.height = entry->height;
 
+        NSUInteger mipLevels =
+            floor(log2(MAX(entry->width, entry->height))) + 1;
+        textureDesc.mipmapLevelCount = mipLevels;
+
         id<MTLTexture> texture =
             [global_device newTextureWithDescriptor:textureDesc];
         MTLRegion region = MTLRegionMake2D(0, 0, entry->width, entry->height);
@@ -308,6 +327,14 @@ static void RenderFrame()
                    mipmapLevel:0
                      withBytes:pixels
                    bytesPerRow:4 * entry->width];
+
+        id<MTLCommandBuffer> blitCommandBuffer =
+            [global_command_queue commandBuffer];
+        id<MTLBlitCommandEncoder> blitEncoder =
+            [blitCommandBuffer blitCommandEncoder];
+        [blitEncoder generateMipmapsForTexture:texture];
+        [blitEncoder endEncoding];
+        [blitCommandBuffer commit];
 
         global_textures[@(entry->handle)] = texture;
 
@@ -379,10 +406,26 @@ static void RenderFrame()
           [commandEncoder setRenderPipelineState:global_pipeline_state];
         }
 
-        id<MTLTexture> texture = global_textures[@(entry->texture_handle)];
-        if (texture && entry->shader_type == 0)
+        if (entry->shader_type == 0)
         {
-          [commandEncoder setFragmentTexture:texture atIndex:0];
+          id<MTLTexture> albedo = global_textures[@(entry->textures.albedo)];
+          id<MTLTexture> normal = global_textures[@(entry->textures.normal)];
+          id<MTLTexture> metallic =
+              global_textures[@(entry->textures.metallic)];
+          id<MTLTexture> roughness =
+              global_textures[@(entry->textures.roughness)];
+          id<MTLTexture> ao = global_textures[@(entry->textures.ao)];
+
+          if (albedo)
+            [commandEncoder setFragmentTexture:albedo atIndex:0];
+          if (normal)
+            [commandEncoder setFragmentTexture:normal atIndex:1];
+          if (metallic)
+            [commandEncoder setFragmentTexture:metallic atIndex:2];
+          if (roughness)
+            [commandEncoder setFragmentTexture:roughness atIndex:3];
+          if (ao)
+            [commandEncoder setFragmentTexture:ao atIndex:4];
         }
 
         [commandEncoder setVertexBytes:&entry->uniforms
