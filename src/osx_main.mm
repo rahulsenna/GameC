@@ -168,6 +168,12 @@ static void MacLoadShaders()
     NSLog(@"Failed to create grid pipeline state: %@", error);
   }
 
+  [gridFragmentFunction release];
+  [pipelineStateDescriptor release];
+  [fragmentFunction release];
+  [vertexFunction release];
+  [defaultLibrary release];
+
   if (global_pipeline_state && global_grid_pipeline_state)
   {
     NSLog(@"Shaders loaded successfully!");
@@ -259,6 +265,9 @@ static void UpdateDepthTexture(CGSize size)
                                mipmapped:NO];
   desc.usage = MTLTextureUsageRenderTarget;
   desc.storageMode = MTLStorageModePrivate;
+  if (global_depth_texture) {
+      [global_depth_texture release];
+  }
   global_depth_texture = [global_device newTextureWithDescriptor:desc];
 }
 
@@ -337,6 +346,9 @@ static void RenderFrame()
         [blitCommandBuffer commit];
 
         global_textures[@(entry->handle)] = texture;
+
+        [textureDesc release];
+        [texture release];
 
         offset += sizeof(RenderGroupEntry_UploadTexture) +
                   (entry->width * entry->height * 4);
@@ -442,6 +454,7 @@ static void RenderFrame()
         [commandEncoder drawPrimitives:MTLPrimitiveTypeTriangle
                            vertexStart:0
                            vertexCount:entry->vertex_count];
+        [vertexBuffer release];
 
         offset += sizeof(RenderGroupEntry_DrawMesh) +
                   sizeof(Vertex) * entry->vertex_count;
@@ -472,6 +485,7 @@ int main(int argc, const char *argv[])
     depthDesc.depthWriteEnabled = YES;
     global_depth_state =
         [global_device newDepthStencilStateWithDescriptor:depthDesc];
+    [depthDesc release];
 
     // Load Shaders
     MacLoadShaders();
@@ -523,14 +537,15 @@ int main(int argc, const char *argv[])
         MacLoadShaders();
       }
 
-      NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                          untilDate:[NSDate distantPast]
-                                             inMode:NSDefaultRunLoopMode
-                                            dequeue:YES];
-      if (event)
+      NSEvent *event;
+      while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                         untilDate:[NSDate distantPast]
+                                            inMode:NSDefaultRunLoopMode
+                                           dequeue:YES]))
       {
         [NSApp sendEvent:event];
       }
+      [NSApp updateWindows];
       RenderFrame();
     }
   }
