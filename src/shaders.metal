@@ -7,6 +7,8 @@ struct VertexIn
   float3 normal;
   float3 tangent;
   float2 tex_coord;
+  packed_uint4 bone_indices;
+  packed_float4 bone_weights;
 };
 
 struct Uniforms
@@ -17,6 +19,8 @@ struct Uniforms
   float3 light_color;
   float3 camera_pos;
   float ambient_intensity;
+  float4x4 bone_matrices[64];
+  uint has_bones;
 };
 
 struct RasterizerData
@@ -33,15 +37,40 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
                                   constant Uniforms &uniforms [[buffer(1)]])
 {
   RasterizerData out;
-  out.position = uniforms.mvp_matrix * float4(vertices[vertexID].position, 1.0);
-  out.world_position = (uniforms.model_matrix * float4(vertices[vertexID].position, 1.0)).xyz;
+  
+  float4 local_pos = float4(vertices[vertexID].position, 1.0);
+  float4 local_norm = float4(vertices[vertexID].normal, 0.0);
+  float4 local_tangent = float4(vertices[vertexID].tangent, 0.0);
+  
+  if (uniforms.has_bones > 0)
+  {
+    local_pos = float4(0.0);
+    local_norm = float4(0.0);
+    local_tangent = float4(0.0);
+    for (int i = 0; i < 4; i++)
+    {
+      float weight = vertices[vertexID].bone_weights[i];
+      if (weight > 0.0)
+      {
+        uint bone_idx = vertices[vertexID].bone_indices[i];
+        float4x4 bone_matrix = uniforms.bone_matrices[bone_idx];
+        local_pos += (bone_matrix * float4(vertices[vertexID].position, 1.0)) * weight;
+        local_norm += (bone_matrix * float4(vertices[vertexID].normal, 0.0)) * weight;
+        local_tangent += (bone_matrix * float4(vertices[vertexID].tangent, 0.0)) * weight;
+      }
+    }
+    local_pos.w = 1.0;
+  }
+
+  out.position = uniforms.mvp_matrix * local_pos;
+  out.world_position = (uniforms.model_matrix * local_pos).xyz;
   
   // Rotate the normal using the model matrix (ignoring translation)
   float3x3 normal_matrix = float3x3(uniforms.model_matrix[0].xyz,
                                     uniforms.model_matrix[1].xyz,
                                     uniforms.model_matrix[2].xyz);
-  out.world_normal = normal_matrix * vertices[vertexID].normal;
-  out.world_tangent = normal_matrix * vertices[vertexID].tangent;
+  out.world_normal = normal_matrix * local_norm.xyz;
+  out.world_tangent = normal_matrix * local_tangent.xyz;
   out.tex_coord = vertices[vertexID].tex_coord;
   
   return out;
@@ -97,6 +126,7 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
                               texture2d<float> aoMap [[texture(4)]],
                               constant Uniforms &uniforms [[buffer(1)]])
 {
+    // return float4(1,0,1,1);
     constexpr sampler textureSampler(mag_filter::linear, min_filter::linear, mip_filter::linear, s_address::repeat, t_address::repeat);
     
     // Albedo is often in sRGB, so convert to linear space for calculations

@@ -4,6 +4,7 @@
 #include <math.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include "ufbx.h"
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 {
@@ -168,7 +169,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     }
 
     // Generate Shapes
-    state->num_models = 12;
+    state->num_models = 13;
     state->models = PushArray(arena, FBXModel, state->num_models);
 
     MaterialTextures default_textures_local = default_textures;
@@ -226,6 +227,9 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->models[11] =
         LoadFBX(arena, "assets/banana_leaves.fbx", &out_output->render_group,
                 &next_tex_handle, default_textures_local);
+    state->models[12] = LoadFBX(arena, "assets/animations/WalkingFemale.fbx",
+                                &out_output->render_group, &next_tex_handle,
+                                default_textures_local);
   }
 
   float dt = 0.016f;
@@ -360,8 +364,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     Mat4 rot_y = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
                       Vec4{0, 0, 0, 1}};
 
-    // Scale it down (often FBX files are in cm)
-    float s = 0.01f;
+    // Scale is 1.0f because skinning to world space already applies the FBX unit scale to meters
+    float s = 1.0f;
     Mat4 scale_matrix = Mat4{Vec4{s, 0, 0, 0}, Vec4{0, s, 0, 0},
                              Vec4{0, 0, s, 0}, Vec4{0, 0, 0, 1}};
 
@@ -378,8 +382,68 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
       FBXNode *node = &state->models[10].nodes[n];
       if (node->vertex_count > 0)
       {
+        uniforms.has_bones = 0;
+
+        ufbx_scene *eval_scene = NULL;
+        if (state->models[12].has_animation)
+        { // Use animation from models[12]
+          ufbx_anim *anim = (ufbx_anim *)state->models[12].ufbx_anim_ptr;
+          double duration = anim->time_end - anim->time_begin;
+          double anim_time = state->time;
+          if (duration > 0.0)
+          {
+            anim_time = fmod(state->time, duration) + anim->time_begin;
+          }
+          
+          eval_scene = ufbx_evaluate_scene(
+              (ufbx_scene *)state->models[12].ufbx_scene_ptr,
+              anim, anim_time, NULL, NULL);
+          if (eval_scene && node->num_bones > 0)
+          {
+            uniforms.has_bones = 1;
+            for (U32 b = 0; b < node->num_bones; b++)
+            {
+              ufbx_node *bone_node = (ufbx_node *)node->bone_nodes[b];
+
+              // Find bone in the evaluated animation scene by name
+              ufbx_node *eval_bone =
+                  ufbx_find_node(eval_scene, bone_node->name.data);
+              if (!eval_bone)
+              {
+                eval_bone = bone_node; // Fallback to rest pose
+              }
+
+              Mat4 eval_geom = {};
+              eval_geom.columns[0] = {(float)eval_bone->geometry_to_world.m00,
+                                      (float)eval_bone->geometry_to_world.m10,
+                                      (float)eval_bone->geometry_to_world.m20,
+                                      0.0f};
+              eval_geom.columns[1] = {(float)eval_bone->geometry_to_world.m01,
+                                      (float)eval_bone->geometry_to_world.m11,
+                                      (float)eval_bone->geometry_to_world.m21,
+                                      0.0f};
+              eval_geom.columns[2] = {(float)eval_bone->geometry_to_world.m02,
+                                      (float)eval_bone->geometry_to_world.m12,
+                                      (float)eval_bone->geometry_to_world.m22,
+                                      0.0f};
+              eval_geom.columns[3] = {(float)eval_bone->geometry_to_world.m03,
+                                      (float)eval_bone->geometry_to_world.m13,
+                                      (float)eval_bone->geometry_to_world.m23,
+                                      1.0f};
+
+              uniforms.bone_matrices[b] =
+                  eval_geom * node->inverse_bind_matrices[b];
+            }
+          }
+        }
+
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
                             0, node->vertex_count, node->vertices);
+
+        if (eval_scene)
+        {
+          ufbx_free_scene(eval_scene);
+        }
       }
     }
   }

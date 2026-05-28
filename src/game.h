@@ -21,12 +21,16 @@ struct Camera
   float yaw;
 };
 
+#define MAX_BONES 64
+
 struct Vertex
 {
   Vec3 position;
   Vec3 normal;
   Vec3 tangent;
   Vec2 tex_coord;
+  U32 bone_indices[4];
+  F32 bone_weights[4];
 };
 
 struct MaterialTextures
@@ -43,12 +47,18 @@ struct FBXNode
   U32 vertex_count;
   Vertex *vertices;
   MaterialTextures textures;
+  U32 num_bones;
+  void **bone_nodes;
+  Mat4 *inverse_bind_matrices;
 };
 
 struct FBXModel
 {
   U32 num_nodes;
   FBXNode nodes[32]; // Support up to 32 sub-meshes
+  void *ufbx_scene_ptr;
+  void *ufbx_anim_ptr;
+  B32 has_animation;
 };
 
 struct GameState
@@ -97,6 +107,8 @@ struct Uniforms
   Vec3 light_color;
   Vec3 camera_pos;
   float ambient_intensity;
+  Mat4 bone_matrices[MAX_BONES];
+  U32 has_bones;
 };
 
 struct RenderGroupEntry_DrawMesh

@@ -44,7 +44,8 @@ static void AddVertex(Vertex *vertices, U32 &index, float px, float py,
       tz /= l;
     }
   }
-  vertices[index++] = {{px, py, pz}, {nx, ny, nz}, {tx, ty, tz}, {u, v}};
+  vertices[index++] = {{px, py, pz}, {nx, ny, nz}, {tx, ty, tz},
+                       {u, v},       {0, 0, 0, 0}, {0.0f, 0.0f, 0.0f, 0.0f}};
 }
 
 static void AddTriangle(Vertex *vertices, U32 &index, float p1x, float p1y,
@@ -502,6 +503,9 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
 {
   FBXModel model = {};
   model.num_nodes = 0;
+  model.ufbx_scene_ptr = NULL;
+  model.ufbx_anim_ptr = NULL;
+  model.has_animation = 0;
 
   ufbx_load_opts opts = {};
   opts.target_axes = ufbx_axes_right_handed_y_up;
@@ -521,7 +525,7 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
     const void *data;
     U32 handle;
   };
-  LoadedTex loaded_tex[32] = {};
+  LoadedTex loaded_tex[256] = {};
   U32 num_loaded_tex = 0;
 
   for (size_t mesh_i = 0; mesh_i < scene->meshes.count; mesh_i++)
@@ -605,9 +609,12 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
                                          height, pixels);
                 stbi_image_free(pixels);
 
-                loaded_tex[num_loaded_tex].data = tex->content.data;
-                loaded_tex[num_loaded_tex].handle = final_handle;
-                num_loaded_tex++;
+                if (num_loaded_tex < 256)
+                {
+                  loaded_tex[num_loaded_tex].data = tex->content.data;
+                  loaded_tex[num_loaded_tex].handle = final_handle;
+                  num_loaded_tex++;
+                }
               }
             }
 
@@ -638,8 +645,46 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
 
     node.vertices = PushArray(arena, Vertex, max_tris * 3);
     U32 idx = 0;
+
+    // --- 2.5 Extract Skinning Information ---
+    ufbx_skin_deformer *skin = NULL;
+    node.num_bones = 0;
+    node.bone_nodes = NULL;
+    node.inverse_bind_matrices = NULL;
+    if (ufbx_m->skin_deformers.count > 0)
+    {
+      skin = ufbx_m->skin_deformers.data[0];
+      node.bone_nodes = PushArray(arena, void *, MAX_BONES);
+      node.inverse_bind_matrices = PushArray(arena, Mat4, MAX_BONES);
+      for (size_t c = 0; c < skin->clusters.count; c++)
+      {
+        if (node.num_bones >= MAX_BONES)
+          break;
+        ufbx_skin_cluster *cluster = skin->clusters.data[c];
+        node.bone_nodes[node.num_bones] = cluster->bone_node;
+
+        Mat4 inv_bind = {};
+        inv_bind.columns[0] = {(float)cluster->geometry_to_bone.m00,
+                               (float)cluster->geometry_to_bone.m10,
+                               (float)cluster->geometry_to_bone.m20, 0.0f};
+        inv_bind.columns[1] = {(float)cluster->geometry_to_bone.m01,
+                               (float)cluster->geometry_to_bone.m11,
+                               (float)cluster->geometry_to_bone.m21, 0.0f};
+        inv_bind.columns[2] = {(float)cluster->geometry_to_bone.m02,
+                               (float)cluster->geometry_to_bone.m12,
+                               (float)cluster->geometry_to_bone.m22, 0.0f};
+        inv_bind.columns[3] = {(float)cluster->geometry_to_bone.m03,
+                               (float)cluster->geometry_to_bone.m13,
+                               (float)cluster->geometry_to_bone.m23, 1.0f};
+        node.inverse_bind_matrices[node.num_bones] = inv_bind;
+        node.num_bones++;
+      }
+    }
+
     uint32_t *tri_indices =
         (uint32_t *)malloc(ufbx_m->max_face_triangles * 3 * sizeof(uint32_t));
+    if (!tri_indices)
+      continue;
 
     for (size_t fi = 0; fi < ufbx_m->faces.count; fi++)
     {
@@ -713,8 +758,59 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
             t_z = 0.0f;
           }
 
+          U32 vert_index_in_array = idx; // Store before AddVertex increments it
           AddVertex(node.vertices, idx, pos.x, pos.y, pos.z, norm.x, norm.y,
                     norm.z, uv.x, uv.y, t_x, t_y, t_z);
+
+          if (skin && v_idx < ufbx_m->vertex_indices.count)
+          {
+            uint32_t geom_v_idx = ufbx_m->vertex_indices.data[v_idx];
+            if (geom_v_idx < skin->vertices.count)
+            {
+              ufbx_skin_vertex skin_vertex = skin->vertices.data[geom_v_idx];
+
+              // Collect weights
+              struct WeightInfo
+              {
+                U32 index;
+                F32 weight;
+              };
+              WeightInfo weights[4] = {};
+
+              size_t num_w = skin_vertex.num_weights;
+              if (num_w > 4)
+                num_w = 4; // limit to 4 highest (ufbx sorts them by weight)
+
+              float total_weight = 0.0f;
+              for (size_t w = 0; w < num_w; w++)
+              {
+                if ((skin_vertex.weight_begin + w) < skin->weights.count)
+                {
+                  ufbx_skin_weight skin_weight =
+                      skin->weights.data[skin_vertex.weight_begin + w];
+                  if (skin_weight.cluster_index < MAX_BONES)
+                  {
+                    weights[w].index = skin_weight.cluster_index;
+                    weights[w].weight = (F32)skin_weight.weight;
+                    total_weight += weights[w].weight;
+                  }
+                }
+              }
+
+              // Normalize
+              if (total_weight > 0.0001f)
+              {
+                for (int w = 0; w < 4; w++)
+                {
+                  node.vertices[vert_index_in_array].bone_indices[w] =
+                      weights[w].index;
+                  node.vertices[vert_index_in_array].bone_weights[w] =
+                      total_weight > 0.0f ? weights[w].weight / total_weight
+                                          : 0.0f;
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -724,6 +820,16 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
     model.nodes[model.num_nodes++] = node;
   }
 
-  ufbx_free_scene(scene);
+  if (scene->anim_stacks.count > 0)
+  {
+    model.has_animation = 1;
+    model.ufbx_scene_ptr = scene;
+    model.ufbx_anim_ptr = scene->anim_stacks.data[0]->anim;
+  }
+  else
+  {
+    ufbx_free_scene(scene);
+  }
+
   return model;
 }
