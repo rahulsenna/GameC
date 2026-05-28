@@ -1,6 +1,6 @@
 #pragma once
 #include "base_arena.h"
-#include <simd/simd.h>
+#include "math_utils.h"
 
 struct GameInput
 {
@@ -16,17 +16,17 @@ struct GameInput
 
 struct Camera
 {
-  simd_float3 position;
+  Vec3 position;
   float pitch;
   float yaw;
 };
 
 struct Vertex
 {
-  simd_float3 position;
-  simd_float3 normal;
-  simd_float3 tangent;
-  simd_float2 tex_coord;
+  Vec3 position;
+  Vec3 normal;
+  Vec3 tangent;
+  Vec2 tex_coord;
 };
 
 struct MeshData
@@ -100,11 +100,11 @@ struct RenderGroupEntry_UploadTexture
 
 struct Uniforms
 {
-  simd_float4x4 mvp_matrix;
-  simd_float4x4 model_matrix;
-  simd_float3 light_dir;
-  simd_float3 light_color;
-  simd_float3 camera_pos;
+  Mat4 mvp_matrix;
+  Mat4 model_matrix;
+  Vec3 light_dir;
+  Vec3 light_color;
+  Vec3 camera_pos;
   float ambient_intensity;
 };
 

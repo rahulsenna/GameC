@@ -2,8 +2,6 @@
 #include "math_utils.h"
 #include "shapes.h"
 #include <math.h>
-#include <simd/simd.h>
-
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -150,7 +148,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->default_textures.roughness = default_roughness;
     state->default_textures.ao = default_ao;
 
-    state->camera.position = simd_make_float3(0.0f, 2.0f, 5.0f);
+    state->camera.position = Vec3{0.0f, 2.0f, 5.0f};
     state->camera.yaw = -90.0f; // Look down -Z
     state->camera.pitch = 0.0f;
 
@@ -228,7 +226,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   if (state->camera.pitch < -89.0f)
     state->camera.pitch = -89.0f;
 
-  simd_float3 front;
+  Vec3 front;
   front.x = cosf(state->camera.yaw * (M_PI / 180.0f)) *
             cosf(state->camera.pitch * (M_PI / 180.0f));
   front.y = sinf(state->camera.pitch * (M_PI / 180.0f));
@@ -236,8 +234,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
             cosf(state->camera.pitch * (M_PI / 180.0f));
   front = math_normalize(front);
 
-  simd_float3 up = simd_make_float3(0.0f, 1.0f, 0.0f);
-  simd_float3 right = math_normalize(math_cross(front, up));
+  Vec3 up = Vec3{0.0f, 1.0f, 0.0f};
+  Vec3 right = math_normalize(math_cross(front, up));
 
   if (input->key_w)
     state->camera.position += front * move_speed;
@@ -251,32 +249,30 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   // --- Render ---
   PushClearCommand(&out_output->render_group, 0.1f, 0.1f, 0.1f, 1.0f);
 
-  simd_float4x4 view_matrix = math_make_look_at(
-      state->camera.position, state->camera.position + front, up);
+  Mat4 view_matrix = math_make_look_at(state->camera.position,
+                                       state->camera.position + front, up);
 
   float fov = 60.0f * (3.14159f / 180.0f);
   float aspect = 800.0f / 800.0f;
-  simd_float4x4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
+  Mat4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
 
-  simd_float4x4 vp_matrix = simd_mul(proj_matrix, view_matrix);
+  Mat4 vp_matrix = proj_matrix * view_matrix;
 
   // --- Common Scene Uniforms ---
   Uniforms base_uniforms = {};
-  base_uniforms.light_dir = math_normalize(simd_make_float3(1.0f, 1.0f, 1.0f));
-  base_uniforms.light_color = simd_make_float3(1.0f, 1.0f, 1.0f);
+  base_uniforms.light_dir = math_normalize(Vec3{1.0f, 1.0f, 1.0f});
+  base_uniforms.light_color = Vec3{1.0f, 1.0f, 1.0f};
   base_uniforms.camera_pos = state->camera.position;
   base_uniforms.ambient_intensity = 0.2f;
 
   // 1. Draw Infinite Grid Plane
   {
-    simd_float4x4 model_matrix = simd_matrix(
-        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-        simd_make_float4(0, 0, 1, 0),
-        simd_make_float4(0, -0.5f, 0,
-                         1) // Set plane to ground level (-0.5 is the exact
-                            // bottom bound for most of our shapes)
-    );
-    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    Mat4 model_matrix = Mat4{
+        Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
+        Vec4{0, -0.5f, 0, 1} // Set plane to ground level (-0.5 is the exact
+                             // bottom bound for most of our shapes)
+    };
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
 
     Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
@@ -307,19 +303,15 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     float x = (i % 3) * 2.5f - 2.5f;
     float z = (i / 3) * 2.5f - 2.5f;
     float y = shape_y_offsets[i];
-    simd_float4x4 trans_matrix =
-        simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                    simd_make_float4(0, 0, 1, 0), simd_make_float4(x, y, z, 1));
+    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
+                             Vec4{0, 0, 1, 0}, Vec4{x, y, z, 1}};
 
     float angle = state->time * 0.5f + i;
-    simd_float4x4 rot_y =
-        simd_matrix(simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
-                    simd_make_float4(0, 1, 0, 0),
-                    simd_make_float4(sinf(angle), 0, cosf(angle), 0),
-                    simd_make_float4(0, 0, 0, 1));
+    Mat4 rot_y = Mat4{Vec4{cosf(angle), 0, -sinf(angle), 0}, Vec4{0, 1, 0, 0},
+                      Vec4{sinf(angle), 0, cosf(angle), 0}, Vec4{0, 0, 0, 1}};
 
-    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
-    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    Mat4 model_matrix = trans_matrix * rot_y;
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
 
     Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
@@ -332,23 +324,20 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   // 3. Draw FBX Model in front of the shapes (closer to camera)
   {
-    simd_float4x4 trans_matrix = simd_matrix(
-        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-        simd_make_float4(0, 0, 1, 0), simd_make_float4(0, -0.5f, -2.5f, 1));
+    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
+                             Vec4{0, 0, 1, 0}, Vec4{0, -0.5f, -2.5f, 1}};
 
-    simd_float4x4 rot_y =
-        simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                    simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 0, 0, 1));
+    Mat4 rot_y = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
+                      Vec4{0, 0, 0, 1}};
 
     // Scale it down (often FBX files are in cm)
     float s = 0.01f;
-    simd_float4x4 scale_matrix =
-        simd_matrix(simd_make_float4(s, 0, 0, 0), simd_make_float4(0, s, 0, 0),
-                    simd_make_float4(0, 0, s, 0), simd_make_float4(0, 0, 0, 1));
+    Mat4 scale_matrix = Mat4{Vec4{s, 0, 0, 0}, Vec4{0, s, 0, 0},
+                             Vec4{0, 0, s, 0}, Vec4{0, 0, 0, 1}};
 
-    simd_float4x4 rot_scale = simd_mul(rot_y, scale_matrix);
-    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_scale);
-    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    Mat4 rot_scale = rot_y * scale_matrix;
+    Mat4 model_matrix = trans_matrix * rot_scale;
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
 
     Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
@@ -367,20 +356,16 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   // 4. Draw Alien PBR Sphere in front of camera
   {
-    simd_float4x4 trans_matrix = simd_matrix(
-        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-        simd_make_float4(0, 0, 1, 0), simd_make_float4(0, 2.0f, 3.0f, 1));
+    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
+                             Vec4{0, 0, 1, 0}, Vec4{0, 2.0f, 3.0f, 1}};
 
     // Rotate slowly over time
     float angle = state->time * 0.2f;
-    simd_float4x4 rot_y =
-        simd_matrix(simd_make_float4(cosf(angle), 0, -sinf(angle), 0),
-                    simd_make_float4(0, 1, 0, 0),
-                    simd_make_float4(sinf(angle), 0, cosf(angle), 0),
-                    simd_make_float4(0, 0, 0, 1));
+    Mat4 rot_y = Mat4{Vec4{cosf(angle), 0, -sinf(angle), 0}, Vec4{0, 1, 0, 0},
+                      Vec4{sinf(angle), 0, cosf(angle), 0}, Vec4{0, 0, 0, 1}};
 
-    simd_float4x4 model_matrix = simd_mul(trans_matrix, rot_y);
-    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    Mat4 model_matrix = trans_matrix * rot_y;
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
 
     Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
@@ -393,17 +378,15 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   // 5. Draw Banana in front of camera on the ground
   {
-    simd_float4x4 trans_matrix = simd_matrix(
-        simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-        simd_make_float4(0, 0, 1, 0), simd_make_float4(-2.f, -0.5f, -1.0f, 1));
+    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
+                             Vec4{0, 0, 1, 0}, Vec4{-2.f, -0.5f, -1.0f, 1}};
 
     float s = 1.f;
-    simd_float4x4 scale_matrix =
-        simd_matrix(simd_make_float4(s, 0, 0, 0), simd_make_float4(0, s, 0, 0),
-                    simd_make_float4(0, 0, s, 0), simd_make_float4(0, 0, 0, 1));
+    Mat4 scale_matrix = Mat4{Vec4{s, 0, 0, 0}, Vec4{0, s, 0, 0},
+                             Vec4{0, 0, s, 0}, Vec4{0, 0, 0, 1}};
 
-    simd_float4x4 model_matrix = simd_mul(trans_matrix, scale_matrix);
-    simd_float4x4 mvp_matrix = simd_mul(vp_matrix, model_matrix);
+    Mat4 model_matrix = trans_matrix * scale_matrix;
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
 
     Uniforms uniforms = base_uniforms;
     uniforms.mvp_matrix = mvp_matrix;
