@@ -1,4 +1,19 @@
 #include "shapes.h"
+
+struct MeshData
+{
+  U32 vertex_count;
+  Vertex *vertices;
+};
+
+static FBXModel ToFBXModel(MeshData mesh)
+{
+  FBXModel model = {};
+  model.num_nodes = 1;
+  model.nodes[0].vertex_count = mesh.vertex_count;
+  model.nodes[0].vertices = mesh.vertices;
+  return model;
+}
 #include "stb_image.h"
 #include "ufbx.h"
 #include <math.h>
@@ -61,7 +76,8 @@ AddQuad(Vertex *vertices, U32 &index, float p1x, float p1y, float p1z, float u1,
   AddVertex(vertices, index, p4x, p4y, p4z, nx, ny, nz, u4, v4);
 }
 
-MeshData CreateCuboid(Arena *arena, float width, float height, float depth)
+static MeshData _CreateCuboid(Arena *arena, float width, float height,
+                              float depth)
 {
   MeshData mesh;
   mesh.vertex_count = 36;
@@ -94,12 +110,13 @@ MeshData CreateCuboid(Arena *arena, float width, float height, float depth)
   return mesh;
 }
 
-MeshData CreateCube(Arena *arena, float size)
+static MeshData _CreateCube(Arena *arena, float size)
 {
-  return CreateCuboid(arena, size, size, size);
+  return _CreateCuboid(arena, size, size, size);
 }
 
-MeshData CreateSphere(Arena *arena, float radius, int sectors, int stacks)
+static MeshData _CreateSphere(Arena *arena, float radius, int sectors,
+                              int stacks)
 {
   MeshData mesh;
   mesh.vertex_count = sectors * stacks * 6; // 6 vertices per quad (2 triangles)
@@ -178,8 +195,8 @@ MeshData CreateSphere(Arena *arena, float radius, int sectors, int stacks)
   return mesh;
 }
 
-MeshData CreateTorus(Arena *arena, float main_radius, float tube_radius,
-                     int main_segments, int tube_segments)
+static MeshData _CreateTorus(Arena *arena, float main_radius, float tube_radius,
+                             int main_segments, int tube_segments)
 {
   MeshData mesh;
   mesh.vertex_count = main_segments * tube_segments * 6;
@@ -234,7 +251,8 @@ MeshData CreateTorus(Arena *arena, float main_radius, float tube_radius,
   return mesh;
 }
 
-MeshData CreateCylinder(Arena *arena, float radius, float height, int sectors)
+static MeshData _CreateCylinder(Arena *arena, float radius, float height,
+                                int sectors)
 {
   MeshData mesh;
   // Top, Bottom faces = sectors * 3 each
@@ -286,7 +304,8 @@ MeshData CreateCylinder(Arena *arena, float radius, float height, int sectors)
   return mesh;
 }
 
-MeshData CreateCone(Arena *arena, float radius, float height, int sectors)
+static MeshData _CreateCone(Arena *arena, float radius, float height,
+                            int sectors)
 {
   MeshData mesh;
   // Bottom faces = sectors * 3, Side faces = sectors * 3
@@ -326,7 +345,7 @@ MeshData CreateCone(Arena *arena, float radius, float height, int sectors)
   return mesh;
 }
 
-MeshData CreateTriangularPyramid(Arena *arena, float size)
+static MeshData _CreateTriangularPyramid(Arena *arena, float size)
 {
   MeshData mesh;
   mesh.vertex_count = 12; // 4 triangles
@@ -356,7 +375,8 @@ MeshData CreateTriangularPyramid(Arena *arena, float size)
   return mesh;
 }
 
-MeshData CreateSquarePyramid(Arena *arena, float base_size, float height)
+static MeshData _CreateSquarePyramid(Arena *arena, float base_size,
+                                     float height)
 {
   MeshData mesh;
   mesh.vertex_count = 18; // base (2 tri) + 4 side tris = 6 tris
@@ -386,8 +406,8 @@ MeshData CreateSquarePyramid(Arena *arena, float base_size, float height)
   return mesh;
 }
 
-MeshData CreateTriangularPrism(Arena *arena, float width, float height,
-                               float depth)
+static MeshData _CreateTriangularPrism(Arena *arena, float width, float height,
+                                       float depth)
 {
   MeshData mesh;
   mesh.vertex_count = 24; // 2 bases (2 tris) + 3 rectangular sides (6 tris) ->
@@ -419,7 +439,7 @@ MeshData CreateTriangularPrism(Arena *arena, float width, float height,
   return mesh;
 }
 
-MeshData CreatePlane(Arena *arena, float size)
+static MeshData _CreatePlane(Arena *arena, float size)
 {
   MeshData mesh;
   mesh.vertex_count = 6;
@@ -434,6 +454,49 @@ MeshData CreatePlane(Arena *arena, float size)
   return mesh;
 }
 
+FBXModel CreateCuboid(Arena *arena, float width, float height, float depth)
+{
+  return ToFBXModel(_CreateCuboid(arena, width, height, depth));
+}
+FBXModel CreateCube(Arena *arena, float size)
+{
+  return ToFBXModel(_CreateCube(arena, size));
+}
+FBXModel CreateSphere(Arena *arena, float radius, int sectors, int stacks)
+{
+  return ToFBXModel(_CreateSphere(arena, radius, sectors, stacks));
+}
+FBXModel CreateTorus(Arena *arena, float main_radius, float tube_radius,
+                     int main_segments, int tube_segments)
+{
+  return ToFBXModel(_CreateTorus(arena, main_radius, tube_radius, main_segments,
+                                 tube_segments));
+}
+FBXModel CreateCylinder(Arena *arena, float radius, float height, int sectors)
+{
+  return ToFBXModel(_CreateCylinder(arena, radius, height, sectors));
+}
+FBXModel CreateCone(Arena *arena, float radius, float height, int sectors)
+{
+  return ToFBXModel(_CreateCone(arena, radius, height, sectors));
+}
+FBXModel CreateTriangularPyramid(Arena *arena, float size)
+{
+  return ToFBXModel(_CreateTriangularPyramid(arena, size));
+}
+FBXModel CreateSquarePyramid(Arena *arena, float base_size, float height)
+{
+  return ToFBXModel(_CreateSquarePyramid(arena, base_size, height));
+}
+FBXModel CreateTriangularPrism(Arena *arena, float width, float height,
+                               float depth)
+{
+  return ToFBXModel(_CreateTriangularPrism(arena, width, height, depth));
+}
+FBXModel CreatePlane(Arena *arena, float size)
+{
+  return ToFBXModel(_CreatePlane(arena, size));
+}
 FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
                  U32 *next_texture_handle, MaterialTextures default_textures)
 {

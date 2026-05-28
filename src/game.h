@@ -29,12 +29,6 @@ struct Vertex
   Vec2 tex_coord;
 };
 
-struct MeshData
-{
-  U32 vertex_count;
-  Vertex *vertices;
-};
-
 struct MaterialTextures
 {
   U32 albedo;
@@ -61,12 +55,9 @@ struct GameState
 {
   B32 is_initialized;
   F32 time;
-  MaterialTextures default_textures;
-  MaterialTextures alien_textures;
   Camera camera;
-  MeshData shapes[10]; // Back to 10 for procedurals
-  FBXModel fbx_model;
-  FBXModel banana_model;
+  U32 num_models;
+  FBXModel *models;
 };
 
 // -- Render Command Structures --

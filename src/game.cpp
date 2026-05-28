@@ -142,11 +142,12 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     PushUploadTextureCommand(&out_output->render_group, default_ao, 1, 1,
                              &white_pixel);
 
-    state->default_textures.albedo = default_albedo;
-    state->default_textures.normal = default_normal;
-    state->default_textures.metallic = default_metallic;
-    state->default_textures.roughness = default_roughness;
-    state->default_textures.ao = default_ao;
+    MaterialTextures default_textures = {};
+    default_textures.albedo = default_albedo;
+    default_textures.normal = default_normal;
+    default_textures.metallic = default_metallic;
+    default_textures.roughness = default_roughness;
+    default_textures.ao = default_ao;
 
     state->camera.position = Vec3{0.0f, 2.0f, 5.0f};
     state->camera.yaw = -90.0f; // Look down -Z
@@ -160,48 +161,71 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
                   &channels, 4); // Force RGBA
     if (data)
     {
-      state->default_textures.albedo = next_tex_handle++;
+      default_textures.albedo = next_tex_handle++;
       PushUploadTextureCommand(&out_output->render_group,
-                               state->default_textures.albedo, width, height,
-                               data);
+                               default_textures.albedo, width, height, data);
       stbi_image_free(data);
     }
 
     // Generate Shapes
-    state->shapes[0] = CreateSphere(arena);
-    state->shapes[1] = CreateTorus(arena);
-    state->shapes[2] = CreateCylinder(arena);
-    state->shapes[3] = CreateCone(arena);
-    state->shapes[4] = CreateCube(arena);
-    state->shapes[5] = CreateCuboid(arena, 1.5f, 0.5f, 1.0f);
-    state->shapes[6] = CreateTriangularPyramid(arena);
-    state->shapes[7] = CreateSquarePyramid(arena);
-    state->shapes[8] = CreateTriangularPrism(arena);
-    state->shapes[9] = CreatePlane(arena, 1000.0f);
+    state->num_models = 12;
+    state->models = PushArray(arena, FBXModel, state->num_models);
 
-    state->fbx_model =
-        LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group,
-                &next_tex_handle, state->default_textures);
+    MaterialTextures default_textures_local = default_textures;
 
-    state->banana_model =
-        LoadFBX(arena, "assets/banana_leaves.fbx", &out_output->render_group,
-                &next_tex_handle, state->default_textures);
-
-    state->alien_textures.albedo =
+    MaterialTextures alien_textures_local = {};
+    alien_textures_local.albedo =
         LoadTexture("assets/alien-panels-bl/alien-panels_albedo.png",
                     &out_output->render_group, &next_tex_handle);
-    state->alien_textures.normal =
+    alien_textures_local.normal =
         LoadTexture("assets/alien-panels-bl/alien-panels_normal-ogl.png",
                     &out_output->render_group, &next_tex_handle);
-    state->alien_textures.metallic =
+    alien_textures_local.metallic =
         LoadTexture("assets/alien-panels-bl/alien-panels_metallic.png",
                     &out_output->render_group, &next_tex_handle);
-    state->alien_textures.roughness =
+    alien_textures_local.roughness =
         LoadTexture("assets/alien-panels-bl/alien-panels_roughness.png",
                     &out_output->render_group, &next_tex_handle);
-    state->alien_textures.ao =
+    alien_textures_local.ao =
         LoadTexture("assets/alien-panels-bl/alien-panels_ao.png",
                     &out_output->render_group, &next_tex_handle);
+
+    state->models[0] = CreateSphere(arena);
+    state->models[0].nodes[0].textures = alien_textures_local;
+
+    state->models[1] = CreateTorus(arena);
+    state->models[1].nodes[0].textures = default_textures_local;
+
+    state->models[2] = CreateCylinder(arena);
+    state->models[2].nodes[0].textures = default_textures_local;
+
+    state->models[3] = CreateCone(arena);
+    state->models[3].nodes[0].textures = default_textures_local;
+
+    state->models[4] = CreateCube(arena);
+    state->models[4].nodes[0].textures = default_textures_local;
+
+    state->models[5] = CreateCuboid(arena, 1.5f, 0.5f, 1.0f);
+    state->models[5].nodes[0].textures = default_textures_local;
+
+    state->models[6] = CreateTriangularPyramid(arena);
+    state->models[6].nodes[0].textures = default_textures_local;
+
+    state->models[7] = CreateSquarePyramid(arena);
+    state->models[7].nodes[0].textures = default_textures_local;
+
+    state->models[8] = CreateTriangularPrism(arena);
+    state->models[8].nodes[0].textures = default_textures_local;
+
+    state->models[9] = CreatePlane(arena, 1000.0f);
+    state->models[9].nodes[0].textures = default_textures_local;
+
+    state->models[10] =
+        LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group,
+                &next_tex_handle, default_textures_local);
+    state->models[11] =
+        LoadFBX(arena, "assets/banana_leaves.fbx", &out_output->render_group,
+                &next_tex_handle, default_textures_local);
   }
 
   float dt = 0.016f;
@@ -278,9 +302,12 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
 
-    PushDrawMeshCommand(
-        &out_output->render_group, uniforms, state->default_textures, 1,
-        state->shapes[9].vertex_count, state->shapes[9].vertices);
+    for (U32 n = 0; n < state->models[9].num_nodes; n++)
+    {
+      FBXNode *node = &state->models[9].nodes[n];
+      PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
+                          1, node->vertex_count, node->vertices);
+    }
   }
 
   // 2. Draw 9 Shapes
@@ -317,9 +344,12 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
 
-    PushDrawMeshCommand(
-        &out_output->render_group, uniforms, state->default_textures, 0,
-        state->shapes[i].vertex_count, state->shapes[i].vertices);
+    for (U32 n = 0; n < state->models[i].num_nodes; n++)
+    {
+      FBXNode *node = &state->models[i].nodes[n];
+      PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
+                          0, node->vertex_count, node->vertices);
+    }
   }
 
   // 3. Draw FBX Model in front of the shapes (closer to camera)
@@ -343,37 +373,15 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
 
-    for (U32 n = 0; n < state->fbx_model.num_nodes; n++)
+    for (U32 n = 0; n < state->models[10].num_nodes; n++)
     {
-      FBXNode *node = &state->fbx_model.nodes[n];
+      FBXNode *node = &state->models[10].nodes[n];
       if (node->vertex_count > 0)
       {
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
                             0, node->vertex_count, node->vertices);
       }
     }
-  }
-
-  // 4. Draw Alien PBR Sphere in front of camera
-  {
-    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
-                             Vec4{0, 0, 1, 0}, Vec4{0, 2.0f, 3.0f, 1}};
-
-    // Rotate slowly over time
-    float angle = state->time * 0.2f;
-    Mat4 rot_y = Mat4{Vec4{cosf(angle), 0, -sinf(angle), 0}, Vec4{0, 1, 0, 0},
-                      Vec4{sinf(angle), 0, cosf(angle), 0}, Vec4{0, 0, 0, 1}};
-
-    Mat4 model_matrix = trans_matrix * rot_y;
-    Mat4 mvp_matrix = vp_matrix * model_matrix;
-
-    Uniforms uniforms = base_uniforms;
-    uniforms.mvp_matrix = mvp_matrix;
-    uniforms.model_matrix = model_matrix;
-
-    PushDrawMeshCommand(&out_output->render_group, uniforms,
-                        state->alien_textures, 0, state->shapes[0].vertex_count,
-                        state->shapes[0].vertices); // 0 is sphere
   }
 
   // 5. Draw Banana in front of camera on the ground
@@ -392,9 +400,9 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
 
-    for (U32 n = 0; n < state->banana_model.num_nodes; n++)
+    for (U32 n = 0; n < state->models[11].num_nodes; n++)
     {
-      FBXNode *node = &state->banana_model.nodes[n];
+      FBXNode *node = &state->models[11].nodes[n];
       if (node->vertex_count > 0)
       {
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,

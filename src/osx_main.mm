@@ -265,8 +265,9 @@ static void UpdateDepthTexture(CGSize size)
                                mipmapped:NO];
   desc.usage = MTLTextureUsageRenderTarget;
   desc.storageMode = MTLStorageModePrivate;
-  if (global_depth_texture) {
-      [global_depth_texture release];
+  if (global_depth_texture)
+  {
+    [global_depth_texture release];
   }
   global_depth_texture = [global_device newTextureWithDescriptor:desc];
 }
