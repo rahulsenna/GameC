@@ -113,12 +113,12 @@ U32 LoadTexture(const char *path, RenderGroup *render_group,
 extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
                                     GameOutput *out_output)
 {
-  if (arena->pos == sizeof(Arena))
+  if (arena->pos == ARENA_HEADER_SIZE)
   {
     PushStruct(arena, GameState);
   }
 
-  GameState *state = (GameState *)((U8 *)arena + sizeof(Arena));
+  GameState *state = (GameState *)((U8 *)arena + ARENA_HEADER_SIZE);
   out_output->render_group.size = 0;
 
   if (!state->is_initialized)

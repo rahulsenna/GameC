@@ -3,11 +3,12 @@
   "configurations": [
     {
       "name": "Debug Engine",
-      "type": "lldb",
+      "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/engine",
       "cwd": "${workspaceFolder}",
-      "preLaunchTask": "Build Engine"
+      "preLaunchTask": "Build Engine",
+      "MIMode": "lldb"
     }
   ]
 }

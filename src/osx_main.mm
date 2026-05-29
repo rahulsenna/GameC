@@ -143,7 +143,10 @@ int main(int argc, const char *argv[])
   {
     MacLoadGameCode();
 
-    global_arena = ArenaAlloc(1ull << 30, 1ull << 25);
+    ArenaParams arena_params = {0};
+    arena_params.reserve_size = GB(16);
+    arena_params.commit_size = MB(32);
+    global_arena = ArenaAlloc(&arena_params);
     global_device = (__bridge id<MTLDevice>)Renderer_CreateDevice();
 
     [NSApplication sharedApplication];
@@ -177,7 +180,11 @@ int main(int argc, const char *argv[])
                   (__bridge void *)global_metal_layer);
     global_shader_write_time = GetFileWriteTime("build/shaders.metallib");
 
-    static U8 *render_buffer = (U8 *)malloc(1024 * 1024 * 1024);
+    ArenaParams render_arena_params = {0};
+    render_arena_params.reserve_size = GB(1);
+    render_arena_params.commit_size = MB(32);
+    static Arena *render_arena = ArenaAlloc(&render_arena_params);
+    static U8 *render_buffer = PushArrayNoZero(render_arena, U8, GB(1));
 
     while (global_running)
     {

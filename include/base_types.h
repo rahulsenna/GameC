@@ -22,3 +22,19 @@ typedef uint32_t B32;
 #define AlignPow2(x, p) (((x) + (p) - 1) & ~((p) - 1))
 #define BASE_MIN(a, b) ((a) < (b) ? (a) : (b))
 #define BASE_MAX(a, b) ((a) > (b) ? (a) : (b))
+
+#define KB(x) ((U64)(x) << 10)
+#define MB(x) ((U64)(x) << 20)
+#define GB(x) ((U64)(x) << 30)
+#define TB(x) ((U64)(x) << 40)
+
+#ifndef AlignOf
+#define AlignOf(type) alignof(type)
+#endif
+
+#ifndef AsanPoisonMemoryRegion
+#define AsanPoisonMemoryRegion(m, s)
+#endif
+#ifndef AsanUnpoisonMemoryRegion
+#define AsanUnpoisonMemoryRegion(m, s)
+#endif
