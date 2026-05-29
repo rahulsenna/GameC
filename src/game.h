@@ -2,6 +2,13 @@
 #include "base_arena.h"
 #include "math_utils.h"
 
+// Ozz-animation headers
+#include "ozz/animation/runtime/animation.h"
+#include "ozz/animation/runtime/local_to_model_job.h"
+#include "ozz/animation/runtime/sampling_job.h"
+#include "ozz/animation/runtime/skeleton.h"
+#include "ozz/base/maths/soa_transform.h"
+
 struct GameInput
 {
   B32 key_w;
@@ -49,6 +56,8 @@ struct FBXNode
   MaterialTextures textures;
   U32 num_bones;
   void **bone_nodes;
+  U16 *ozz_joint_mapping; // maps from local bone index to ozz skeleton joint
+                          // index
   Mat4 *inverse_bind_matrices;
 };
 
@@ -57,8 +66,15 @@ struct FBXModel
   U32 num_nodes;
   FBXNode nodes[32]; // Support up to 32 sub-meshes
   void *ufbx_scene_ptr;
-  void *ufbx_anim_ptr;
+
   B32 has_animation;
+  ozz::animation::Skeleton *ozz_skeleton;
+  ozz::animation::Animation *ozz_animation;
+  ozz::animation::SamplingJob::Context *ozz_cache;
+
+  U32 num_soa_joints;
+  ozz::math::SoaTransform *local_transforms;
+  ozz::math::Float4x4 *model_matrices;
 };
 
 struct GameState

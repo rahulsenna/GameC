@@ -15,9 +15,10 @@ build_game() {
     clang++ -g -O0 \
         -std=c++17 -fno-exceptions -fno-rtti \
         -Wno-deprecated \
-        -I libs/ \
+        -I include/ \
         -dynamiclib \
-        src/game.cpp src/math_utils.cpp libs/base_arena.cpp src/shapes.cpp libs/ufbx.c \
+        src/game.cpp src/math_utils.cpp include/base_arena.cpp src/shapes.cpp include/ufbx.c \
+        lib/ozz/libozz_animation_r.a lib/ozz/libozz_base_r.a \
         -o build/game.dylib
 }
 
@@ -25,9 +26,9 @@ build_engine() {
     echo "Compiling Engine Code..."
     clang++ -g -O0 \
         -std=c++17 -fno-exceptions -fno-rtti \
-        -I libs/ \
+        -I include/ \
         -framework Cocoa -framework Metal -framework QuartzCore \
-        src/osx_main.mm src/renderer.cpp libs/base_arena.cpp \
+        src/osx_main.mm src/renderer.cpp include/base_arena.cpp \
         -o build/engine
 }
 

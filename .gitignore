@@ -2,3 +2,5 @@ build/**
 **utilities/build/
 .agents/**
 **.DS_Store**
+lib/**
+utilities/ozz/*

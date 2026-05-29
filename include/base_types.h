@@ -20,5 +20,5 @@ typedef uint32_t B32;
     __builtin_trap();                                                          \
   }
 #define AlignPow2(x, p) (((x) + (p) - 1) & ~((p) - 1))
-#define Min(a, b) ((a) < (b) ? (a) : (b))
-#define Max(a, b) ((a) > (b) ? (a) : (b))
+#define BASE_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define BASE_MAX(a, b) ((a) > (b) ? (a) : (b))

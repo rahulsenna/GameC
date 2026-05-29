@@ -504,7 +504,6 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
   FBXModel model = {};
   model.num_nodes = 0;
   model.ufbx_scene_ptr = NULL;
-  model.ufbx_anim_ptr = NULL;
   model.has_animation = 0;
 
   ufbx_load_opts opts = {};
@@ -824,7 +823,6 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
   {
     model.has_animation = 1;
     model.ufbx_scene_ptr = scene;
-    model.ufbx_anim_ptr = scene->anim_stacks.data[0]->anim;
   }
   else
   {
