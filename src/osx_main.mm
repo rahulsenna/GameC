@@ -51,7 +51,11 @@ static void MacLoadGameCode()
   MacUnloadGameCode();
   const char *source_path = "build/game.dylib";
   const char *temp_path = "build/game_load.dylib";
+  
+  // Copy the dylib and its dSYM bundle so LLDB can find the debug symbols
   system("cp build/game.dylib build/game_load.dylib");
+  system("rm -rf build/game_load.dylib.dSYM");
+  system("cp -R build/game.dylib.dSYM build/game_load.dylib.dSYM >/dev/null 2>&1 || true");
 
   global_game_code.dylib = dlopen(temp_path, RTLD_LAZY | RTLD_GLOBAL);
   if (global_game_code.dylib)
