@@ -21,6 +21,21 @@ struct Uniforms
   float ambient_intensity;
   float4x4 bone_matrices[64];
   uint has_bones;
+
+  uint vertex_offset;
+  uint albedo_tex;
+  uint normal_tex;
+  uint metallic_tex;
+  uint roughness_tex;
+  uint ao_tex;
+};
+
+struct RootData {
+    device VertexIn* vertex_heap;
+};
+
+struct TextureHeap {
+    array<texture2d<float>, 1024> textures;
 };
 
 struct RasterizerData
@@ -33,14 +48,15 @@ struct RasterizerData
 };
 
 vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
-                                  constant VertexIn *vertices [[buffer(0)]],
+                                  constant RootData *root [[buffer(0)]],
                                   constant Uniforms &uniforms [[buffer(1)]])
 {
   RasterizerData out;
   
-  float4 local_pos = float4(vertices[vertexID].position, 1.0);
-  float4 local_norm = float4(vertices[vertexID].normal, 0.0);
-  float4 local_tangent = float4(vertices[vertexID].tangent, 0.0);
+  uint id = uniforms.vertex_offset + vertexID;
+  float4 local_pos = float4(root->vertex_heap[id].position, 1.0);
+  float4 local_norm = float4(root->vertex_heap[id].normal, 0.0);
+  float4 local_tangent = float4(root->vertex_heap[id].tangent, 0.0);
   
   if (uniforms.has_bones > 0)
   {
@@ -49,14 +65,14 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
     local_tangent = float4(0.0);
     for (int i = 0; i < 4; i++)
     {
-      float weight = vertices[vertexID].bone_weights[i];
+      float weight = root->vertex_heap[id].bone_weights[i];
       if (weight > 0.0)
       {
-        uint bone_idx = vertices[vertexID].bone_indices[i];
+        uint bone_idx = root->vertex_heap[id].bone_indices[i];
         float4x4 bone_matrix = uniforms.bone_matrices[bone_idx];
-        local_pos += (bone_matrix * float4(vertices[vertexID].position, 1.0)) * weight;
-        local_norm += (bone_matrix * float4(vertices[vertexID].normal, 0.0)) * weight;
-        local_tangent += (bone_matrix * float4(vertices[vertexID].tangent, 0.0)) * weight;
+        local_pos += (bone_matrix * float4(root->vertex_heap[id].position, 1.0)) * weight;
+        local_norm += (bone_matrix * float4(root->vertex_heap[id].normal, 0.0)) * weight;
+        local_tangent += (bone_matrix * float4(root->vertex_heap[id].tangent, 0.0)) * weight;
       }
     }
     local_pos.w = 1.0;
@@ -71,7 +87,7 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
                                     uniforms.model_matrix[2].xyz);
   out.world_normal = normal_matrix * local_norm.xyz;
   out.world_tangent = normal_matrix * local_tangent.xyz;
-  out.tex_coord = vertices[vertexID].tex_coord;
+  out.tex_coord = root->vertex_heap[id].tex_coord;
   
   return out;
 }
@@ -119,30 +135,35 @@ float3 fresnelSchlick(float cosTheta, float3 F0)
 }
 
 fragment float4 fragment_main(RasterizerData in [[stage_in]],
-                              texture2d<float> albedoMap [[texture(0)]],
-                              texture2d<float> normalMap [[texture(1)]],
-                              texture2d<float> metallicMap [[texture(2)]],
-                              texture2d<float> roughnessMap [[texture(3)]],
-                              texture2d<float> aoMap [[texture(4)]],
-                              constant Uniforms &uniforms [[buffer(1)]])
+                              constant RootData *root [[buffer(0)]],
+                              constant Uniforms &uniforms [[buffer(1)]],
+                              constant TextureHeap &texture_heap [[buffer(2)]])
 {
-    // return float4(1,0,1,1);
     constexpr sampler textureSampler(mag_filter::linear, min_filter::linear, mip_filter::linear, s_address::repeat, t_address::repeat);
     
-    // Albedo is often in sRGB, so convert to linear space for calculations
-    float4 albedo_rgba = albedoMap.sample(textureSampler, in.tex_coord);
+    float4 albedo_rgba = float4(1.0);
+    if (uniforms.albedo_tex != 0) {
+        albedo_rgba = texture_heap.textures[uniforms.albedo_tex].sample(textureSampler, in.tex_coord);
+    }
     
-    // Discard almost completely invisible pixels to prevent them from writing to the depth buffer and occluding the face behind them
     if (albedo_rgba.a < 0.1) {
         discard_fragment();
     }
     
-    // We rely on pipeline alpha blending now, so just pass the soft alpha through
     float3 albedo = pow(albedo_rgba.rgb, float3(2.2));
     
-    float metallic = metallicMap.sample(textureSampler, in.tex_coord).r;
-    float roughness = roughnessMap.sample(textureSampler, in.tex_coord).r;
-    float ao = aoMap.sample(textureSampler, in.tex_coord).r;
+    float metallic = 0.0;
+    if (uniforms.metallic_tex != 0) {
+        metallic = texture_heap.textures[uniforms.metallic_tex].sample(textureSampler, in.tex_coord).r;
+    }
+    float roughness = 1.0;
+    if (uniforms.roughness_tex != 0) {
+        roughness = texture_heap.textures[uniforms.roughness_tex].sample(textureSampler, in.tex_coord).r;
+    }
+    float ao = 1.0;
+    if (uniforms.ao_tex != 0) {
+        ao = texture_heap.textures[uniforms.ao_tex].sample(textureSampler, in.tex_coord).r;
+    }
     
     // Normal mapping using vertex tangents
     float3 N = normalize(in.world_normal);
@@ -154,7 +175,10 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
     
     float3x3 TBN = float3x3(T, B, N);
 
-    float3 tangentNormal = normalMap.sample(textureSampler, in.tex_coord).rgb * 2.0 - 1.0;
+    float3 tangentNormal = float3(0, 0, 1);
+    if (uniforms.normal_tex != 0) {
+        tangentNormal = texture_heap.textures[uniforms.normal_tex].sample(textureSampler, in.tex_coord).rgb * 2.0 - 1.0;
+    }
     
     // Most normal maps (like OpenGL) expect Y to go UP. If it looks like lizard skin (concave),
     // it's possible it's a DirectX normal map (Y DOWN). For now we assume OpenGL.

@@ -26,6 +26,24 @@ struct Camera
   float yaw;
 };
 
+typedef U64 GpuPtr;
+
+struct GpuAllocator
+{
+  U64 capacity;
+  U64 used;
+};
+
+inline GpuPtr gpuMalloc(GpuAllocator *allocator, U64 size)
+{
+  size = (size + 15) & ~15;
+  if (allocator->used + size > allocator->capacity)
+    return 0;
+  GpuPtr offset = allocator->used;
+  allocator->used += size;
+  return offset;
+}
+
 #define MAX_BONES 64
 
 struct Vertex
@@ -51,6 +69,7 @@ struct FBXNode
 {
   U32 vertex_count;
   Vertex *vertices;
+  GpuPtr vertex_offset; // GPU heap offset
   MaterialTextures textures;
   U32 num_bones;
   void **bone_nodes;
@@ -108,6 +127,7 @@ struct PlayerController
 struct GameState
 {
   B32 is_initialized;
+  GpuAllocator gpu_allocator;
   F32 time;
   Camera camera;
   U32 num_models;
@@ -127,6 +147,7 @@ enum RenderGroupEntryType
   RenderGroupEntryType_Clear,
   RenderGroupEntryType_UploadTexture,
   RenderGroupEntryType_DrawMesh,
+  RenderGroupEntryType_UploadGeometry,
 };
 
 struct RenderGroupEntryHeader
@@ -149,6 +170,13 @@ struct RenderGroupEntry_UploadTexture
 
 // Removed duplicate Vertex struct from here
 
+struct RenderGroupEntry_UploadGeometry
+{
+  GpuPtr offset;
+  U32 size;
+  // Raw geometry data immediately follows
+};
+
 struct Uniforms
 {
   Mat4 mvp_matrix;
@@ -159,15 +187,20 @@ struct Uniforms
   float ambient_intensity;
   Mat4 bone_matrices[MAX_BONES];
   U32 has_bones;
+  U32 vertex_offset;
+  U32 albedo_tex;
+  U32 normal_tex;
+  U32 metallic_tex;
+  U32 roughness_tex;
+  U32 ao_tex;
 };
 
 struct RenderGroupEntry_DrawMesh
 {
   Uniforms uniforms;
-  MaterialTextures textures;
   U32 shader_type;
   U32 vertex_count;
-  // Note: Vertices array is stored immediately following this struct in memory!
+  GpuPtr vertex_offset;
 };
 
 struct RenderGroup
@@ -180,9 +213,10 @@ struct RenderGroup
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
 void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
                                U32 height);
+void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
-                         U32 vertex_count, Vertex *vertices);
+                         U32 vertex_count, GpuPtr vertex_offset);
 
 // -- Game Output --
 

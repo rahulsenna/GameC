@@ -25,6 +25,11 @@ static MTL::Texture *global_depth_texture = nullptr;
 
 static std::unordered_map<U32, MTL::Texture *> global_textures;
 
+static MTL::Buffer *global_gpu_heap = nullptr;
+static MTL::Buffer *global_root_buffer = nullptr;
+static MTL::ArgumentEncoder *global_texture_argument_encoder = nullptr;
+static MTL::Buffer *global_texture_argument_buffer = nullptr;
+
 extern "C" void Renderer_LoadShaders()
 {
   std::string fullPath =
@@ -100,6 +105,16 @@ extern "C" void Renderer_LoadShaders()
     std::cerr << "Failed to create grid pipeline state\n";
   }
 
+  if (!global_texture_argument_encoder)
+  {
+    global_texture_argument_encoder = fragmentFunction->newArgumentEncoder(2);
+    global_texture_argument_buffer = global_device->newBuffer(
+        global_texture_argument_encoder->encodedLength(),
+        MTL::ResourceStorageModeShared);
+    global_texture_argument_encoder->setArgumentBuffer(
+        global_texture_argument_buffer, 0);
+  }
+
   gridFragmentFunction->release();
   pipelineStateDescriptor->release();
   fragmentFunction->release();
@@ -138,6 +153,13 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
   global_metal_layer = (CA::MetalLayer *)metal_layer;
   global_metal_layer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
   global_command_queue = global_device->newCommandQueue();
+
+  global_gpu_heap = global_device->newBuffer(512 * 1024 * 1024,
+                                             MTL::ResourceStorageModeShared);
+  global_root_buffer =
+      global_device->newBuffer(8, MTL::ResourceStorageModeShared);
+  uint64_t *root_ptr = (uint64_t *)global_root_buffer->contents();
+  *root_ptr = global_gpu_heap->gpuAddress();
 
   MTL::DepthStencilDescriptor *depthDesc =
       MTL::DepthStencilDescriptor::alloc()->init();
@@ -211,18 +233,30 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         global_textures[entry->handle]->release();
       }
       global_textures[entry->handle] = texture;
+      global_texture_argument_encoder->setTexture(texture, entry->handle);
 
       textureDesc->release();
 
       offset += sizeof(RenderGroupEntry_UploadTexture) +
                 (entry->width * entry->height * 4);
     }
+    else if (header->type == RenderGroupEntryType_UploadGeometry)
+    {
+      RenderGroupEntry_UploadGeometry *entry =
+          (RenderGroupEntry_UploadGeometry *)(output->render_group.base +
+                                              offset);
+      void *src_data = (void *)(entry + 1);
+
+      U8 *dest = (U8 *)global_gpu_heap->contents() + entry->offset;
+      memcpy(dest, src_data, entry->size);
+
+      offset += sizeof(RenderGroupEntry_UploadGeometry) + entry->size;
+    }
     else if (header->type == RenderGroupEntryType_DrawMesh)
     {
       RenderGroupEntry_DrawMesh *entry =
           (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
-      offset += sizeof(RenderGroupEntry_DrawMesh) +
-                sizeof(Vertex) * entry->vertex_count;
+      offset += sizeof(RenderGroupEntry_DrawMesh);
     }
   }
 
@@ -250,6 +284,14 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
   commandEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
   commandEncoder->setCullMode(MTL::CullModeBack);
 
+  commandEncoder->useResource(global_gpu_heap, MTL::ResourceUsageRead,
+                              MTL::RenderStageVertex);
+  for (auto const &pair : global_textures)
+  {
+    commandEncoder->useResource(pair.second, MTL::ResourceUsageRead,
+                                MTL::RenderStageFragment);
+  }
+
   // Second pass
   offset = 0;
   while (offset < output->render_group.size)
@@ -270,11 +312,17 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       offset += sizeof(RenderGroupEntry_UploadTexture) +
                 (entry->width * entry->height * 4);
     }
+    else if (header->type == RenderGroupEntryType_UploadGeometry)
+    {
+      RenderGroupEntry_UploadGeometry *entry =
+          (RenderGroupEntry_UploadGeometry *)(output->render_group.base +
+                                              offset);
+      offset += sizeof(RenderGroupEntry_UploadGeometry) + entry->size;
+    }
     else if (header->type == RenderGroupEntryType_DrawMesh)
     {
       RenderGroupEntry_DrawMesh *entry =
           (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
-      Vertex *vertices = (Vertex *)(entry + 1);
 
       if (entry->shader_type == 1)
       {
@@ -285,53 +333,22 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         commandEncoder->setRenderPipelineState(global_pipeline_state);
       }
 
+      commandEncoder->setVertexBuffer(global_root_buffer, 0, 0);
+      commandEncoder->setFragmentBuffer(global_root_buffer, 0, 0);
+
       if (entry->shader_type == 0)
       {
-        MTL::Texture *albedo = global_textures.count(entry->textures.albedo)
-                                   ? global_textures[entry->textures.albedo]
-                                   : nullptr;
-        MTL::Texture *normal = global_textures.count(entry->textures.normal)
-                                   ? global_textures[entry->textures.normal]
-                                   : nullptr;
-        MTL::Texture *metallic = global_textures.count(entry->textures.metallic)
-                                     ? global_textures[entry->textures.metallic]
-                                     : nullptr;
-        MTL::Texture *roughness =
-            global_textures.count(entry->textures.roughness)
-                ? global_textures[entry->textures.roughness]
-                : nullptr;
-        MTL::Texture *ao = global_textures.count(entry->textures.ao)
-                               ? global_textures[entry->textures.ao]
-                               : nullptr;
-
-        if (albedo)
-          commandEncoder->setFragmentTexture(albedo, 0);
-        if (normal)
-          commandEncoder->setFragmentTexture(normal, 1);
-        if (metallic)
-          commandEncoder->setFragmentTexture(metallic, 2);
-        if (roughness)
-          commandEncoder->setFragmentTexture(roughness, 3);
-        if (ao)
-          commandEncoder->setFragmentTexture(ao, 4);
+        commandEncoder->setFragmentBuffer(global_texture_argument_buffer, 0, 2);
       }
 
       commandEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
       commandEncoder->setFragmentBytes(&entry->uniforms, sizeof(Uniforms), 1);
 
-      MTL::Buffer *vertexBuffer = global_device->newBuffer(
-          vertices, sizeof(Vertex) * entry->vertex_count,
-          MTL::ResourceStorageModeShared);
-      commandEncoder->setVertexBuffer(vertexBuffer, 0, 0);
-
       commandEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
                                      (NS::UInteger)0,
                                      (NS::UInteger)entry->vertex_count);
 
-      vertexBuffer->release();
-
-      offset += sizeof(RenderGroupEntry_DrawMesh) +
-                sizeof(Vertex) * entry->vertex_count;
+      offset += sizeof(RenderGroupEntry_DrawMesh);
     }
   }
 

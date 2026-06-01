@@ -53,13 +53,32 @@ void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
   return dst_pixels;
 }
 
-void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
-                         MaterialTextures textures, U32 shader_type,
-                         U32 vertex_count, Vertex *vertices)
+void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
-                   sizeof(RenderGroupEntry_DrawMesh) +
-                   sizeof(Vertex) * vertex_count;
+                   sizeof(RenderGroupEntry_UploadGeometry) + size;
+  Assert(group->size + total_size <= group->max_size);
+
+  RenderGroupEntryHeader *header =
+      (RenderGroupEntryHeader *)(group->base + group->size);
+  header->type = RenderGroupEntryType_UploadGeometry;
+
+  RenderGroupEntry_UploadGeometry *entry =
+      (RenderGroupEntry_UploadGeometry *)(header + 1);
+  entry->offset = offset;
+  entry->size = size;
+
+  void *dst_data = (void *)(entry + 1);
+  group->size += total_size;
+  return dst_data;
+}
+
+void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
+                         MaterialTextures textures, U32 shader_type,
+                         U32 vertex_count, GpuPtr vertex_offset)
+{
+  U32 total_size =
+      sizeof(RenderGroupEntryHeader) + sizeof(RenderGroupEntry_DrawMesh);
   Assert(group->size + total_size <= group->max_size);
 
   RenderGroupEntryHeader *header =
@@ -68,15 +87,16 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
 
   RenderGroupEntry_DrawMesh *entry = (RenderGroupEntry_DrawMesh *)(header + 1);
   entry->uniforms = uniforms;
-  entry->textures = textures;
+  entry->uniforms.vertex_offset = vertex_offset / sizeof(Vertex);
+  entry->uniforms.albedo_tex = textures.albedo;
+  entry->uniforms.normal_tex = textures.normal;
+  entry->uniforms.metallic_tex = textures.metallic;
+  entry->uniforms.roughness_tex = textures.roughness;
+  entry->uniforms.ao_tex = textures.ao;
+
   entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
-
-  Vertex *dst_vertices = (Vertex *)(entry + 1);
-  for (U32 i = 0; i < vertex_count; ++i)
-  {
-    dst_vertices[i] = vertices[i];
-  }
+  entry->vertex_offset = vertex_offset;
 
   group->size += total_size;
 }
@@ -87,6 +107,23 @@ U32 LoadTexture(const char *path, RenderGroup *render_group,
                 U32 *next_tex_handle)
 {
   return LoadCookedTexture(path, render_group, next_tex_handle);
+}
+
+static void UploadModelGeometry(GameState *state, RenderGroup *render_group,
+                                FBXModel *model)
+{
+  for (U32 i = 0; i < model->num_nodes; ++i)
+  {
+    FBXNode *node = &model->nodes[i];
+    if (node->vertex_count == 0)
+      continue;
+    U32 byte_size = node->vertex_count * sizeof(Vertex);
+    node->vertex_offset = gpuMalloc(&state->gpu_allocator, byte_size);
+
+    void *dst =
+        PushUploadGeometryCommand(render_group, node->vertex_offset, byte_size);
+    memcpy(dst, node->vertices, byte_size);
+  }
 }
 
 extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
@@ -103,6 +140,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
   if (!state->is_initialized)
   {
     state->is_initialized = 1;
+    state->gpu_allocator.capacity = 512 * 1024 * 1024; // 512 MB
+    state->gpu_allocator.used = 0;
     state->time = 0.0f;
     U32 next_tex_handle = 1;
 
@@ -229,6 +268,11 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     state->models[11] = LoadCookedMesh(
         arena, "assets_cooked/banana_leaves.mesh", &out_output->render_group,
         &next_tex_handle, default_textures_local);
+
+    for (U32 i = 0; i < state->num_models; ++i)
+    {
+      UploadModelGeometry(state, &out_output->render_group, &state->models[i]);
+    }
 
     // Initialize ozz types
     state->models[10].ozz_skeleton =
@@ -498,7 +542,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     {
       FBXNode *node = &state->models[9].nodes[n];
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                          1, node->vertex_count, node->vertices);
+                          1, node->vertex_count, node->vertex_offset);
     }
   }
 
@@ -540,7 +584,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     {
       FBXNode *node = &state->models[i].nodes[n];
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                          0, node->vertex_count, node->vertices);
+                          0, node->vertex_count, node->vertex_offset);
     }
   }
 
@@ -920,7 +964,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
         }
 
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                            0, node->vertex_count, node->vertices);
+                            0, node->vertex_count, node->vertex_offset);
       }
     }
   }
@@ -947,7 +991,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       if (node->vertex_count > 0)
       {
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                            0, node->vertex_count, node->vertices);
+                            0, node->vertex_count, node->vertex_offset);
       }
     }
   }
