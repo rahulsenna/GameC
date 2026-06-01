@@ -51,11 +51,12 @@ static void MacLoadGameCode()
   MacUnloadGameCode();
   const char *source_path = "build/game.dylib";
   const char *temp_path = "build/game_load.dylib";
-  
+
   // Copy the dylib and its dSYM bundle so LLDB can find the debug symbols
   system("cp build/game.dylib build/game_load.dylib");
   system("rm -rf build/game_load.dylib.dSYM");
-  system("cp -R build/game.dylib.dSYM build/game_load.dylib.dSYM >/dev/null 2>&1 || true");
+  system("cp -R build/game.dylib.dSYM build/game_load.dylib.dSYM >/dev/null "
+         "2>&1 || true");
 
   global_game_code.dylib = dlopen(temp_path, RTLD_LAZY | RTLD_GLOBAL);
   if (global_game_code.dylib)
@@ -118,6 +119,10 @@ static time_t global_shader_write_time = 0;
     global_input.key_left = 1;
   if (key == 124)
     global_input.key_right = 1;
+  if (key == 35)
+    global_input.key_p = 1;
+  if (key == 49)
+    global_input.key_space = 1;
 }
 - (void)keyUp:(NSEvent *)event
 {
@@ -138,6 +143,25 @@ static time_t global_shader_write_time = 0;
     global_input.key_left = 0;
   if (key == 124)
     global_input.key_right = 0;
+  if (key == 35)
+    global_input.key_p = 0;
+  if (key == 49)
+    global_input.key_space = 0;
+}
+- (void)flagsChanged:(NSEvent *)event
+{
+  if ([event modifierFlags] & NSEventModifierFlagShift) {
+    global_input.key_shift = 1;
+  } else {
+    global_input.key_shift = 0;
+  }
+
+  if (([event modifierFlags] & NSEventModifierFlagControl) || 
+      ([event modifierFlags] & NSEventModifierFlagOption)) {
+    global_input.key_ctrl = 1;
+  } else {
+    global_input.key_ctrl = 0;
+  }
 }
 @end
 

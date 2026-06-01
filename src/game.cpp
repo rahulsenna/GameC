@@ -2,6 +2,7 @@
 #include "math_utils.h"
 #include "shapes.h"
 #include <math.h>
+#include <stdlib.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "ozz/animation/runtime/animation.h"
 #include "ozz/animation/runtime/local_to_model_job.h"
@@ -161,6 +162,27 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     state->camera.position = Vec3{0.0f, 2.0f, 5.0f};
     state->camera.yaw = -90.0f; // Look down -Z
     state->camera.pitch = 0.0f;
+    state->is_third_person = 0;
+    state->prev_key_p = 0;
+    state->player.position = Vec3{0.0f, -0.5f, -2.5f};
+    state->player.yaw = 0.0f;
+    state->player.speed_param = 0.0f;
+    state->player.sticky_speed_mode = 0;
+    state->player.last_shift_time = 0.0f;
+    state->player.was_shift_down = 0;
+    state->player.is_jumping = 0;
+    state->player.jump_anim_time = 0.0f;
+    state->player.jump_duration = 0.0f;
+    state->player.current_jump_anim_index = 0;
+    state->player.anim_time = 0.0f;
+    state->player.current_idle_anim_index = 0;
+    state->player.prev_idle_anim_index = 0;
+    state->player.idle_crossfade_time = 0.0f;
+
+    for (int i = 0; i < NUM_ANIM_LAYERS; i++)
+    {
+      state->player.prev_root_trans[i] = {0, 0, 0};
+    }
 
     // Load texture
     int width, height, channels;
@@ -177,7 +199,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     }
 
     // Generate Shapes
-    state->num_models = 13;
+    state->num_models = 12;
     state->models = PushArray(arena, FBXModel, state->num_models);
 
     MaterialTextures default_textures_local = default_textures;
@@ -237,15 +259,9 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
                 &next_tex_handle, default_textures_local);
 
     // Initialize ozz types
-    state->models[12].ozz_skeleton =
+    state->models[10].ozz_skeleton =
         PushStruct(arena, ozz::animation::Skeleton);
-    state->models[12].ozz_animation =
-        PushStruct(arena, ozz::animation::Animation);
-    state->models[12].ozz_cache =
-        PushStruct(arena, ozz::animation::SamplingJob::Context);
-    new (state->models[12].ozz_skeleton) ozz::animation::Skeleton();
-    new (state->models[12].ozz_animation) ozz::animation::Animation();
-    new (state->models[12].ozz_cache) ozz::animation::SamplingJob::Context();
+    new (state->models[10].ozz_skeleton) ozz::animation::Skeleton();
 
     {
       ozz::io::File file("assets/animations/Sophie_skeleton.ozz", "rb");
@@ -254,36 +270,72 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
         ozz::io::IArchive archive(&file);
         if (archive.TestTag<ozz::animation::Skeleton>())
         {
-          archive >> *state->models[12].ozz_skeleton;
-          state->models[12].has_animation = 1;
+          archive >> *state->models[10].ozz_skeleton;
+          state->models[10].has_animation = 1;
         }
       }
     }
+
+    auto load_anim = [&](const char *path, OzzAnimation &anim_out)
     {
-      ozz::io::File file("assets/animations/WalkingFemale_animation.ozz", "rb");
+      anim_out.anim = PushStruct(arena, ozz::animation::Animation);
+      anim_out.cache = PushStruct(arena, ozz::animation::SamplingJob::Context);
+      new (anim_out.anim) ozz::animation::Animation();
+      new (anim_out.cache) ozz::animation::SamplingJob::Context();
+
+      ozz::io::File file(path, "rb");
       if (file.opened())
       {
         ozz::io::IArchive archive(&file);
         if (archive.TestTag<ozz::animation::Animation>())
         {
-          archive >> *state->models[12].ozz_animation;
+          archive >> *anim_out.anim;
         }
       }
-    }
+      anim_out.cache->Resize(state->models[10].ozz_skeleton->num_joints());
+    };
 
-    state->models[12].has_animation = 1;
-    state->models[12].num_soa_joints =
-        state->models[12].ozz_skeleton->num_soa_joints();
-    state->models[12].local_transforms = PushArray(
-        arena, ozz::math::SoaTransform, state->models[12].num_soa_joints);
-    state->models[12].model_matrices =
+    load_anim("assets/animations/Idle_animation.ozz",
+              state->player.anim_clips[CLIP_IDLE_1]);
+    load_anim("assets/animations/Idle-2_animation.ozz",
+              state->player.anim_clips[CLIP_IDLE_2]);
+    load_anim("assets/animations/Idle-3_animation.ozz",
+              state->player.anim_clips[CLIP_IDLE_3]);
+    load_anim("assets/animations/Standing Idle_animation.ozz",
+              state->player.anim_clips[CLIP_IDLE_4]);
+
+    load_anim("assets/animations/WalkingFemale_animation.ozz",
+              state->player.anim_clips[CLIP_WALK]);
+    load_anim("assets/animations/Jogging_animation.ozz",
+              state->player.anim_clips[CLIP_JOG]);
+    load_anim("assets/animations/FastRun_animation.ozz",
+              state->player.anim_clips[CLIP_FASTRUN]);
+
+    load_anim("assets/animations/RunningJump_animation.ozz",
+              state->player.anim_clips[CLIP_JUMP_RUN]);
+    load_anim("assets/animations/StandingJump1_animation.ozz",
+              state->player.anim_clips[CLIP_JUMP_STAND_1]);
+    load_anim("assets/animations/StandingJump2_animation.ozz",
+              state->player.anim_clips[CLIP_JUMP_STAND_2]);
+    load_anim("assets/animations/StandingJumpHigher_animation.ozz",
+              state->player.anim_clips[CLIP_JUMP_STAND_3]);
+
+    state->models[10].num_soa_joints =
+        state->models[10].ozz_skeleton->num_soa_joints();
+
+    for (int i = 0; i < NUM_ANIM_LAYERS; i++)
+    {
+      state->player.local_layers[i] = PushArray(
+          arena, ozz::math::SoaTransform, state->models[10].num_soa_joints);
+    }
+    state->player.blended_locals = PushArray(arena, ozz::math::SoaTransform,
+                                             state->models[10].num_soa_joints);
+    state->models[10].model_matrices =
         PushArray(arena, ozz::math::Float4x4,
-                  state->models[12].ozz_skeleton->num_joints());
-    state->models[12].ozz_cache->Resize(
-        state->models[12].ozz_skeleton->num_joints());
+                  state->models[10].ozz_skeleton->num_joints());
 
     // Build joint mapping for Sophie model (model 10) against WalkingFemale
-    // skeleton (model 12)
+    // skeleton (model 10)
     for (U32 n = 0; n < state->models[10].num_nodes; n++)
     {
       FBXNode *node = &state->models[10].nodes[n];
@@ -293,8 +345,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
         node->ozz_joint_mapping[b] = 0;
         ufbx_node *bone_node = (ufbx_node *)node->bone_nodes[b];
         const char *bone_name = bone_node->name.data;
-        auto joint_names = state->models[12].ozz_skeleton->joint_names();
-        for (int j = 0; j < state->models[12].ozz_skeleton->num_joints(); j++)
+        auto joint_names = state->models[10].ozz_skeleton->joint_names();
+        for (int j = 0; j < state->models[10].ozz_skeleton->num_joints(); j++)
         {
           const char *joint_name = joint_names[j];
           if (strcmp(bone_name, joint_name) == 0)
@@ -311,46 +363,164 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
   state->time += dt;
 
   // --- Camera Update ---
+  if (input->key_p && !state->prev_key_p)
+  {
+    state->is_third_person = !state->is_third_person;
+  }
+  state->prev_key_p = input->key_p;
+
   float move_speed = 3.0f * dt;
   float look_speed = 90.0f * dt; // degrees per second
 
-  if (input->key_up)
-    state->camera.pitch += look_speed;
-  if (input->key_down)
-    state->camera.pitch -= look_speed;
-  if (input->key_left)
-    state->camera.yaw -= look_speed;
-  if (input->key_right)
-    state->camera.yaw += look_speed;
+  Vec3 front = {0, 0, 0};
 
-  // Prevent gimbal lock
-  if (state->camera.pitch > 89.0f)
-    state->camera.pitch = 89.0f;
-  if (state->camera.pitch < -89.0f)
-    state->camera.pitch = -89.0f;
+  if (state->is_third_person)
+  {
+    if (input->key_up)
+      state->camera.pitch += look_speed;
+    if (input->key_down)
+      state->camera.pitch -= look_speed;
+    if (input->key_left)
+      state->camera.yaw -= look_speed;
+    if (input->key_right)
+      state->camera.yaw += look_speed;
 
-  Vec3 front;
-  front.x = cosf(state->camera.yaw * (M_PI / 180.0f)) *
-            cosf(state->camera.pitch * (M_PI / 180.0f));
-  front.y = sinf(state->camera.pitch * (M_PI / 180.0f));
-  front.z = sinf(state->camera.yaw * (M_PI / 180.0f)) *
-            cosf(state->camera.pitch * (M_PI / 180.0f));
-  front = math_normalize(front);
+    if (state->camera.pitch > 89.0f)
+      state->camera.pitch = 89.0f;
+    if (state->camera.pitch < -89.0f)
+      state->camera.pitch = -89.0f;
 
-  Vec3 up = Vec3{0.0f, 1.0f, 0.0f};
-  Vec3 right = math_normalize(math_cross(front, up));
+    front.x = cosf(state->camera.yaw * (M_PI / 180.0f)) *
+              cosf(state->camera.pitch * (M_PI / 180.0f));
+    front.y = sinf(state->camera.pitch * (M_PI / 180.0f));
+    front.z = sinf(state->camera.yaw * (M_PI / 180.0f)) *
+              cosf(state->camera.pitch * (M_PI / 180.0f));
+    front = math_normalize(front);
 
-  if (input->key_w)
-    state->camera.position += front * move_speed;
-  if (input->key_s)
-    state->camera.position -= front * move_speed;
-  if (input->key_a)
-    state->camera.position -= right * move_speed;
-  if (input->key_d)
-    state->camera.position += right * move_speed;
+    Vec3 forward = math_normalize(Vec3{front.x, 0.0f, front.z});
+    Vec3 right = math_normalize(math_cross(forward, Vec3{0.0f, 1.0f, 0.0f}));
+
+    Vec3 movement = {0, 0, 0};
+    if (input->key_w)
+      movement += forward;
+    if (input->key_s)
+      movement -= forward;
+    if (input->key_a)
+      movement -= right;
+    if (input->key_d)
+      movement += right;
+
+    state->total_time += dt;
+
+    bool is_moving =
+        (input->key_w || input->key_s || input->key_a || input->key_d);
+
+    if (!is_moving)
+    {
+      state->player.sticky_speed_mode = 0;
+    }
+    else
+    {
+      if (input->key_shift && !state->player.was_shift_down)
+      {
+        if (state->total_time - state->player.last_shift_time < 0.4f)
+        {
+          state->player.sticky_speed_mode = 2; // FastRun
+        }
+        else
+        {
+          state->player.sticky_speed_mode = 1; // Jog
+        }
+        state->player.last_shift_time = state->total_time;
+      }
+    }
+    state->player.was_shift_down = input->key_shift;
+
+    float target_speed_param = 0.0f;
+    if (movement.x != 0.0f || movement.z != 0.0f)
+    {
+      movement = math_normalize(movement);
+      state->player.yaw = atan2f(movement.x, movement.z) * (180.0f / M_PI);
+
+      if (state->player.sticky_speed_mode == 2)
+        target_speed_param = 3.0f; // FastRun
+      else if (state->player.sticky_speed_mode == 1)
+        target_speed_param = 2.0f; // Jog
+      else
+        target_speed_param = 1.0f; // Walk
+    }
+    state->player.speed_param +=
+        (target_speed_param - state->player.speed_param) * 10.0f * dt;
+
+    if (input->key_space && !state->player.is_jumping)
+    {
+      state->player.is_jumping = 1;
+      state->player.jump_anim_time = 0.0f;
+      if (state->player.speed_param < 0.5f)
+      {
+        state->player.current_jump_anim_index = 1 + (rand() % 3);
+      }
+      else
+      {
+        state->player.current_jump_anim_index = 0;
+      }
+
+      ozz::animation::Animation *anim = nullptr;
+      if (state->player.current_jump_anim_index == 0)
+        anim = state->player.anim_clips[CLIP_JUMP_RUN].anim;
+      else if (state->player.current_jump_anim_index == 1)
+        anim = state->player.anim_clips[CLIP_JUMP_STAND_1].anim;
+      else if (state->player.current_jump_anim_index == 2)
+        anim = state->player.anim_clips[CLIP_JUMP_STAND_2].anim;
+      else if (state->player.current_jump_anim_index == 3)
+        anim = state->player.anim_clips[CLIP_JUMP_STAND_3].anim;
+
+      state->player.jump_duration = anim->duration();
+    }
+
+    Vec3 target = state->player.position + Vec3{0, 1.0f, 0};
+    state->camera.position = target - front * 4.0f;
+  }
+  else
+  {
+    if (input->key_up)
+      state->camera.pitch += look_speed;
+    if (input->key_down)
+      state->camera.pitch -= look_speed;
+    if (input->key_left)
+      state->camera.yaw -= look_speed;
+    if (input->key_right)
+      state->camera.yaw += look_speed;
+
+    if (state->camera.pitch > 89.0f)
+      state->camera.pitch = 89.0f;
+    if (state->camera.pitch < -89.0f)
+      state->camera.pitch = -89.0f;
+
+    front.x = cosf(state->camera.yaw * (M_PI / 180.0f)) *
+              cosf(state->camera.pitch * (M_PI / 180.0f));
+    front.y = sinf(state->camera.pitch * (M_PI / 180.0f));
+    front.z = sinf(state->camera.yaw * (M_PI / 180.0f)) *
+              cosf(state->camera.pitch * (M_PI / 180.0f));
+    front = math_normalize(front);
+
+    Vec3 up = Vec3{0.0f, 1.0f, 0.0f};
+    Vec3 right = math_normalize(math_cross(front, up));
+
+    if (input->key_w)
+      state->camera.position += front * move_speed;
+    if (input->key_s)
+      state->camera.position -= front * move_speed;
+    if (input->key_a)
+      state->camera.position -= right * move_speed;
+    if (input->key_d)
+      state->camera.position += right * move_speed;
+  }
 
   // --- Render ---
   PushClearCommand(&out_output->render_group, 0.1f, 0.1f, 0.1f, 1.0f);
+
+  Vec3 up = Vec3{0.0f, 1.0f, 0.0f};
 
   Mat4 view_matrix = math_make_look_at(state->camera.position,
                                        state->camera.position + front, up);
@@ -433,11 +603,15 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
   // 3. Draw FBX Model in front of the shapes (closer to camera)
   {
-    Mat4 trans_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
-                             Vec4{0, 0, 1, 0}, Vec4{0, -0.5f, -2.5f, 1}};
+    Mat4 trans_matrix =
+        Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
+             Vec4{state->player.position.x, state->player.position.y,
+                  state->player.position.z, 1}};
 
-    Mat4 rot_y = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
-                      Vec4{0, 0, 0, 1}};
+    float yaw_rad = state->player.yaw * (M_PI / 180.0f);
+    Mat4 rot_y =
+        Mat4{Vec4{cosf(yaw_rad), 0, -sinf(yaw_rad), 0}, Vec4{0, 1, 0, 0},
+             Vec4{sinf(yaw_rad), 0, cosf(yaw_rad), 0}, Vec4{0, 0, 0, 1}};
 
     float s = 0.01f;
     Mat4 scale_matrix = Mat4{Vec4{s, 0, 0, 0}, Vec4{0, s, 0, 0},
@@ -451,6 +625,321 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     uniforms.mvp_matrix = mvp_matrix;
     uniforms.model_matrix = model_matrix;
 
+    Vec3 current_root_translation = {0.0f, 0.0f, 0.0f};
+    if (state->models[10].has_animation)
+    {
+      auto *skel = state->models[10].ozz_skeleton;
+
+      OzzAnimation &active_idle =
+          state->player
+              .anim_clips[CLIP_IDLE_1 + state->player.current_idle_anim_index];
+
+      float duration_idle = active_idle.anim->duration();
+      float duration_walk =
+          state->player.anim_clips[CLIP_WALK].anim->duration();
+      float duration_jog = state->player.anim_clips[CLIP_JOG].anim->duration();
+      float duration_fast =
+          state->player.anim_clips[CLIP_FASTRUN].anim->duration();
+
+      float s = state->player.speed_param;
+      float w_idle = 0.0f, w_walk = 0.0f, w_jog = 0.0f, w_fast = 0.0f;
+      if (s < 1.0f)
+      {
+        w_walk = s;
+        w_idle = 1.0f - s;
+      }
+      else if (s < 2.0f)
+      {
+        w_jog = s - 1.0f;
+        w_walk = 1.0f - w_jog;
+      }
+      else
+      {
+        w_fast = s - 2.0f;
+        if (w_fast > 1.0f)
+          w_fast = 1.0f;
+        w_jog = 1.0f - w_fast;
+      }
+
+      float blended_duration = w_idle * duration_idle + w_walk * duration_walk +
+                               w_jog * duration_jog + w_fast * duration_fast;
+      if (blended_duration < 0.001f)
+        blended_duration = 1.0f;
+
+      state->player.anim_time += dt / blended_duration;
+      bool wrapped = false;
+      if (state->player.anim_time >= 1.0f)
+      {
+        state->player.anim_time -= 1.0f;
+        wrapped = true;
+        if (state->player.speed_param < 0.05f && !state->player.is_jumping)
+        {
+          state->player.prev_idle_anim_index =
+              state->player.current_idle_anim_index;
+          state->player.current_idle_anim_index = rand() % 4;
+          state->player.idle_crossfade_time = 0.75f;
+        }
+      }
+
+      if (state->player.idle_crossfade_time > 0.0f)
+      {
+        state->player.idle_crossfade_time -= dt;
+        if (state->player.idle_crossfade_time < 0.0f)
+          state->player.idle_crossfade_time = 0.0f;
+      }
+
+      if (state->player.is_jumping)
+      {
+        state->player.jump_anim_time += dt;
+        if (state->player.jump_anim_time >= state->player.jump_duration)
+        {
+          state->player.is_jumping = 0;
+          if (state->player.position.y < 0.1f)
+            state->player.position.y = 0.0f;
+        }
+      }
+      float ratio = state->player.anim_time;
+
+      ozz::animation::SamplingJob sampling_job;
+      sampling_job.ratio = ratio;
+
+      sampling_job.animation = active_idle.anim;
+      sampling_job.context = active_idle.cache;
+      sampling_job.output = ozz::span<ozz::math::SoaTransform>(
+          state->player.local_layers[LAYER_IDLE],
+          state->models[10].num_soa_joints);
+      sampling_job.Run();
+
+      if (state->player.idle_crossfade_time > 0.0f)
+      {
+        OzzAnimation &prev_idle =
+            state->player
+                .anim_clips[CLIP_IDLE_1 + state->player.prev_idle_anim_index];
+
+        ozz::animation::SamplingJob sampling_job_prev;
+        sampling_job_prev.ratio = ratio;
+        sampling_job_prev.animation = prev_idle.anim;
+        sampling_job_prev.context = prev_idle.cache;
+        sampling_job_prev.output = ozz::span<ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_IDLE_PREV],
+            state->models[10].num_soa_joints);
+        sampling_job_prev.Run();
+      }
+
+      sampling_job.animation = state->player.anim_clips[CLIP_WALK].anim;
+      sampling_job.context = state->player.anim_clips[CLIP_WALK].cache;
+      sampling_job.output = ozz::span<ozz::math::SoaTransform>(
+          state->player.local_layers[LAYER_WALK],
+          state->models[10].num_soa_joints);
+      sampling_job.Run();
+
+      sampling_job.animation = state->player.anim_clips[CLIP_JOG].anim;
+      sampling_job.context = state->player.anim_clips[CLIP_JOG].cache;
+      sampling_job.output = ozz::span<ozz::math::SoaTransform>(
+          state->player.local_layers[LAYER_JOG],
+          state->models[10].num_soa_joints);
+      sampling_job.Run();
+
+      sampling_job.animation = state->player.anim_clips[CLIP_FASTRUN].anim;
+      sampling_job.context = state->player.anim_clips[CLIP_FASTRUN].cache;
+      sampling_job.output = ozz::span<ozz::math::SoaTransform>(
+          state->player.local_layers[LAYER_FASTRUN],
+          state->models[10].num_soa_joints);
+      sampling_job.Run();
+
+      if (state->player.is_jumping)
+      {
+        OzzAnimation *jump_anim_struct = nullptr;
+        if (state->player.current_jump_anim_index == 0)
+          jump_anim_struct = &state->player.anim_clips[CLIP_JUMP_RUN];
+        else if (state->player.current_jump_anim_index == 1)
+          jump_anim_struct = &state->player.anim_clips[CLIP_JUMP_STAND_1];
+        else if (state->player.current_jump_anim_index == 2)
+          jump_anim_struct = &state->player.anim_clips[CLIP_JUMP_STAND_2];
+        else if (state->player.current_jump_anim_index == 3)
+          jump_anim_struct = &state->player.anim_clips[CLIP_JUMP_STAND_3];
+
+        ozz::animation::SamplingJob jump_job;
+        jump_job.ratio =
+            state->player.jump_anim_time / state->player.jump_duration;
+        if (jump_job.ratio > 1.0f)
+          jump_job.ratio = 1.0f;
+        jump_job.animation = jump_anim_struct->anim;
+        jump_job.context = jump_anim_struct->cache;
+        jump_job.output = ozz::span<ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_JUMP],
+            state->models[10].num_soa_joints);
+        jump_job.Run();
+      }
+
+      auto get_root_trans = [](ozz::math::SoaTransform *locals) -> Vec3
+      {
+        return {ozz::math::GetX(locals[0].translation.x),
+                ozz::math::GetX(locals[0].translation.y),
+                ozz::math::GetX(locals[0].translation.z)};
+      };
+
+      Vec3 root_idle = get_root_trans(state->player.local_layers[LAYER_IDLE]);
+      Vec3 root_walk = get_root_trans(state->player.local_layers[LAYER_WALK]);
+      Vec3 root_jog = get_root_trans(state->player.local_layers[LAYER_JOG]);
+      Vec3 root_fastrun =
+          get_root_trans(state->player.local_layers[LAYER_FASTRUN]);
+
+      Vec3 delta_idle =
+          wrapped ? Vec3{0, 0, 0}
+                  : (root_idle - state->player.prev_root_trans[LAYER_IDLE]);
+      Vec3 delta_walk =
+          wrapped ? Vec3{0, 0, 0}
+                  : (root_walk - state->player.prev_root_trans[LAYER_WALK]);
+      Vec3 delta_jog =
+          wrapped ? Vec3{0, 0, 0}
+                  : (root_jog - state->player.prev_root_trans[LAYER_JOG]);
+      Vec3 delta_fastrun =
+          wrapped
+              ? Vec3{0, 0, 0}
+              : (root_fastrun - state->player.prev_root_trans[LAYER_FASTRUN]);
+
+      state->player.prev_root_trans[LAYER_IDLE] = root_idle;
+      state->player.prev_root_trans[LAYER_WALK] = root_walk;
+      state->player.prev_root_trans[LAYER_JOG] = root_jog;
+      state->player.prev_root_trans[LAYER_FASTRUN] = root_fastrun;
+
+      Vec3 root_jump = {0, 0, 0};
+      Vec3 delta_jump = {0, 0, 0};
+      if (state->player.is_jumping)
+      {
+        root_jump = get_root_trans(state->player.local_layers[LAYER_JUMP]);
+        delta_jump =
+            (state->player.jump_anim_time <= dt)
+                ? Vec3{0, 0, 0}
+                : (root_jump - state->player.prev_root_trans[LAYER_JUMP]);
+        state->player.prev_root_trans[LAYER_JUMP] = root_jump;
+      }
+
+      float w_jump = state->player.is_jumping ? 1.0f : 0.0f;
+      if (state->player.is_jumping)
+      {
+        float fade = 0.1f;
+        if (state->player.jump_anim_time < fade)
+          w_jump = state->player.jump_anim_time / fade;
+        else if (state->player.jump_duration - state->player.jump_anim_time <
+                 fade)
+          w_jump =
+              (state->player.jump_duration - state->player.jump_anim_time) /
+              fade;
+      }
+
+      w_idle *= (1.0f - w_jump);
+      w_walk *= (1.0f - w_jump);
+      w_jog *= (1.0f - w_jump);
+      w_fast *= (1.0f - w_jump);
+
+      Vec3 blended_local_delta = delta_idle * w_idle + delta_walk * w_walk +
+                                 delta_jog * w_jog + delta_fastrun * w_fast +
+                                 delta_jump * w_jump;
+
+      float crossfade_weight = 0.0f;
+      if (state->player.idle_crossfade_time > 0.0f)
+      {
+        crossfade_weight = state->player.idle_crossfade_time / 0.75f;
+      }
+
+      float active_idle_weight = w_idle * (1.0f - crossfade_weight);
+      float prev_idle_weight = w_idle * crossfade_weight;
+
+      ozz::animation::BlendingJob::Layer layers[6];
+      int num_layers = 0;
+      if (active_idle_weight > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_IDLE],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = active_idle_weight;
+        num_layers++;
+      }
+      if (prev_idle_weight > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_IDLE_PREV],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = prev_idle_weight;
+        num_layers++;
+      }
+      if (w_walk > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_WALK],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = w_walk;
+        num_layers++;
+      }
+      if (w_jog > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_JOG],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = w_jog;
+        num_layers++;
+      }
+      if (w_fast > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_FASTRUN],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = w_fast;
+        num_layers++;
+      }
+      if (w_jump > 0.0f)
+      {
+        layers[num_layers].transform = ozz::span<const ozz::math::SoaTransform>(
+            state->player.local_layers[LAYER_JUMP],
+            state->models[10].num_soa_joints);
+        layers[num_layers].weight = w_jump;
+        num_layers++;
+      }
+
+      ozz::animation::BlendingJob blend_job;
+      blend_job.layers = ozz::span<const ozz::animation::BlendingJob::Layer>(
+          layers, num_layers);
+      blend_job.rest_pose = skel->joint_rest_poses();
+      blend_job.output = ozz::span<ozz::math::SoaTransform>(
+          state->player.blended_locals, state->models[10].num_soa_joints);
+      blend_job.Run();
+
+      ozz::animation::LocalToModelJob ltm_job;
+      ltm_job.skeleton = skel;
+      ltm_job.input = ozz::span<ozz::math::SoaTransform>(
+          state->player.blended_locals, state->models[10].num_soa_joints);
+      ltm_job.output = ozz::span<ozz::math::Float4x4>(
+          state->models[10].model_matrices, skel->num_joints());
+      ltm_job.Run();
+
+      const ozz::math::Float4x4 &root_mat = state->models[10].model_matrices[0];
+      const float *rm = reinterpret_cast<const float *>(&root_mat);
+      current_root_translation = {rm[12], 0.0f,
+                                  rm[14]}; // raw unscaled translation
+
+      if (!wrapped)
+      {
+        float yaw_rad = state->player.yaw * (M_PI / 180.0f);
+
+        float s_y = sinf(yaw_rad);
+        float c_y = cosf(yaw_rad);
+
+        Vec3 world_delta;
+        world_delta.x =
+            blended_local_delta.x * c_y + blended_local_delta.z * s_y;
+        world_delta.y = blended_local_delta.y;
+        world_delta.z =
+            -blended_local_delta.x * s_y + blended_local_delta.z * c_y;
+
+        if (state->player.speed_param > 0.05f)
+        {
+          state->player.position += world_delta;
+        }
+      }
+    }
+
     for (U32 n = 0; n < state->models[10].num_nodes; n++)
     {
       FBXNode *node = &state->models[10].nodes[n];
@@ -458,37 +947,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
       {
         uniforms.has_bones = 0;
 
-        if (state->models[12].has_animation)
+        if (state->models[10].has_animation)
         {
-          auto *anim = state->models[12].ozz_animation;
-          auto *skel = state->models[12].ozz_skeleton;
-          float duration = anim->duration();
-          float anim_time = 0.0f;
-          if (duration > 0.0f)
-          {
-            anim_time = fmodf(state->time, duration);
-          }
-
-          // Sample animation
-          ozz::animation::SamplingJob sampling_job;
-          sampling_job.animation = state->models[12].ozz_animation;
-          sampling_job.context = state->models[12].ozz_cache;
-          sampling_job.ratio = duration > 0.0f ? anim_time / duration : 0.0f;
-          sampling_job.output = ozz::span<ozz::math::SoaTransform>(
-              state->models[12].local_transforms,
-              state->models[12].num_soa_joints);
-          sampling_job.Run();
-
-          // Convert to model space
-          ozz::animation::LocalToModelJob ltm_job;
-          ltm_job.skeleton = skel;
-          ltm_job.input = ozz::span<ozz::math::SoaTransform>(
-              state->models[12].local_transforms,
-              state->models[12].num_soa_joints);
-          ltm_job.output = ozz::span<ozz::math::Float4x4>(
-              state->models[12].model_matrices, skel->num_joints());
-          ltm_job.Run();
-
           if (node->num_bones > 0)
           {
             uniforms.has_bones = 1;
@@ -496,17 +956,19 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
             {
               U16 ozz_j = node->ozz_joint_mapping[b];
               const ozz::math::Float4x4 &ozz_mat =
-                  state->models[12].model_matrices[ozz_j];
+                  state->models[10].model_matrices[ozz_j];
 
               const float *m = reinterpret_cast<const float *>(&ozz_mat);
               Mat4 eval_geom = {};
-              // Keep rotation/scale at 1.0
               eval_geom.columns[0] = {m[0], m[1], m[2], m[3]};
               eval_geom.columns[1] = {m[4], m[5], m[6], m[7]};
               eval_geom.columns[2] = {m[8], m[9], m[10], m[11]};
-              // Translation is already in meters, so directly copy
               eval_geom.columns[3] = {m[12] * 100.f, m[13] * 100.f,
                                       m[14] * 100.f, m[15]};
+
+              eval_geom.columns[3].x -= current_root_translation.x * 100.f;
+              eval_geom.columns[3].y -= current_root_translation.y * 100.f;
+              eval_geom.columns[3].z -= current_root_translation.z * 100.f;
 
               uniforms.bone_matrices[b] =
                   eval_geom * node->inverse_bind_matrices[b];

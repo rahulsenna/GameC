@@ -4,11 +4,12 @@
 
 // Ozz-animation headers
 #include "ozz/animation/runtime/animation.h"
+#include "ozz/animation/runtime/blending_job.h"
 #include "ozz/animation/runtime/local_to_model_job.h"
 #include "ozz/animation/runtime/sampling_job.h"
 #include "ozz/animation/runtime/skeleton.h"
+#include "ozz/base/maths/simd_math.h"
 #include "ozz/base/maths/soa_transform.h"
-
 struct GameInput
 {
   B32 key_w;
@@ -19,6 +20,10 @@ struct GameInput
   B32 key_down;
   B32 key_left;
   B32 key_right;
+  B32 key_p;
+  B32 key_shift;
+  B32 key_ctrl;
+  B32 key_space;
 };
 
 struct Camera
@@ -69,12 +74,75 @@ struct FBXModel
 
   B32 has_animation;
   ozz::animation::Skeleton *ozz_skeleton;
-  ozz::animation::Animation *ozz_animation;
-  ozz::animation::SamplingJob::Context *ozz_cache;
-
   U32 num_soa_joints;
   ozz::math::SoaTransform *local_transforms;
   ozz::math::Float4x4 *model_matrices;
+};
+
+struct OzzAnimation
+{
+  ozz::animation::Animation *anim;
+  ozz::animation::SamplingJob::Context *cache;
+};
+
+enum AnimLayer
+{
+  LAYER_IDLE = 0,
+  LAYER_IDLE_PREV,
+  LAYER_WALK,
+  LAYER_JOG,
+  LAYER_FASTRUN,
+  LAYER_JUMP,
+  NUM_ANIM_LAYERS
+};
+
+enum AnimClip
+{
+  CLIP_IDLE_1 = 0,
+  CLIP_IDLE_2,
+  CLIP_IDLE_3,
+  CLIP_IDLE_4,
+  CLIP_WALK,
+  CLIP_JOG,
+  CLIP_FASTRUN,
+  CLIP_JUMP_RUN,
+  CLIP_JUMP_STAND_1,
+  CLIP_JUMP_STAND_2,
+  CLIP_JUMP_STAND_3,
+  NUM_ANIM_CLIPS
+};
+
+struct PlayerController
+{
+  // Physical State
+  Vec3 position;
+  float yaw;
+
+  // Input/Movement State
+  float speed_param;
+  int sticky_speed_mode;
+  float last_shift_time;
+  B32 was_shift_down;
+
+  // Jumping State
+  B32 is_jumping;
+  float jump_anim_time;
+  float jump_duration;
+  int current_jump_anim_index;
+
+  // Idle State
+  float anim_time;
+  int current_idle_anim_index;
+  int prev_idle_anim_index;
+  float idle_crossfade_time;
+
+  // Animations
+  OzzAnimation anim_clips[NUM_ANIM_CLIPS];
+
+  // Blending & Root Motion
+  ozz::math::SoaTransform *local_layers[NUM_ANIM_LAYERS];
+  ozz::math::SoaTransform *blended_locals;
+  Vec3 prev_root_trans[NUM_ANIM_LAYERS];
 };
 
 struct GameState
@@ -84,6 +152,12 @@ struct GameState
   Camera camera;
   U32 num_models;
   FBXModel *models;
+
+  B32 is_third_person;
+  B32 prev_key_p;
+  float total_time;
+
+  PlayerController player;
 };
 
 // -- Render Command Structures --
