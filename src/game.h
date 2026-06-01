@@ -178,8 +178,8 @@ struct RenderGroup
 };
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
-void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
-                              U32 height, void *pixels);
+void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
+                               U32 height);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
                          U32 vertex_count, Vertex *vertices);

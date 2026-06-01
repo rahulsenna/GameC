@@ -14,6 +14,7 @@ static FBXModel ToFBXModel(MeshData mesh)
   model.nodes[0].vertices = mesh.vertices;
   return model;
 }
+#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include "ufbx.h"
 #include <math.h>
@@ -604,8 +605,9 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
                   }
                 }
                 final_handle = (*next_texture_handle)++;
-                PushUploadTextureCommand(render_group, final_handle, width,
-                                         height, pixels);
+                void *dst_pixels = PushUploadTextureCommand(
+                    render_group, final_handle, width, height);
+                memcpy(dst_pixels, pixels, width * height * 4);
                 stbi_image_free(pixels);
 
                 if (num_loaded_tex < 256)
@@ -680,10 +682,12 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
       }
     }
 
-    uint32_t *tri_indices =
-        (uint32_t *)malloc(ufbx_m->max_face_triangles * 3 * sizeof(uint32_t));
-    if (!tri_indices)
+    uint32_t tri_indices[1024];
+    if (ufbx_m->max_face_triangles * 3 > 1024)
+    {
+      printf("ERROR: Face has too many triangles for stack buffer!\n");
       continue;
+    }
 
     for (size_t fi = 0; fi < ufbx_m->faces.count; fi++)
     {
@@ -813,7 +817,6 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
         }
       }
     }
-    free(tri_indices);
     node.vertex_count = idx;
 
     model.nodes[model.num_nodes++] = node;
@@ -828,6 +831,185 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
   {
     ufbx_free_scene(scene);
   }
+
+  return model;
+}
+
+// ============================================================================
+// Cooked Asset Loaders
+// ============================================================================
+
+#include "asset_formats.h"
+
+U32 LoadCookedTexture(const char *tex_path, RenderGroup *render_group,
+                      U32 *next_tex_handle)
+{
+  FILE *f = fopen(tex_path, "rb");
+  if (!f)
+  {
+    printf("Failed to load cooked texture: %s\n", tex_path);
+    return 0;
+  }
+
+  CookedTexFileHeader header = {};
+  fread(&header, sizeof(header), 1, f);
+
+  if (header.magic != TEX_MAGIC || header.version != TEX_VERSION)
+  {
+    printf("Invalid cooked texture: %s (bad magic/version)\n", tex_path);
+    fclose(f);
+    return 0;
+  }
+
+  U32 handle = (*next_tex_handle)++;
+  void *dst_pixels = PushUploadTextureCommand(render_group, handle,
+                                              header.width, header.height);
+
+  U32 pixel_size = header.width * header.height * header.channels;
+  fread(dst_pixels, pixel_size, 1, f);
+  fclose(f);
+
+  return handle;
+}
+
+FBXModel LoadCookedMesh(Arena *arena, const char *mesh_path,
+                        RenderGroup *render_group, U32 *next_texture_handle,
+                        MaterialTextures default_textures)
+{
+  FBXModel model = {};
+  model.num_nodes = 0;
+  model.ufbx_scene_ptr = NULL;
+  model.has_animation = 0;
+
+  FILE *f = fopen(mesh_path, "rb");
+  if (!f)
+  {
+    printf("Failed to load cooked mesh: %s\n", mesh_path);
+    return model;
+  }
+
+  CookedMeshFileHeader file_header = {};
+  fread(&file_header, sizeof(file_header), 1, f);
+
+  if (file_header.magic != MESH_MAGIC || file_header.version != MESH_VERSION)
+  {
+    printf("Invalid cooked mesh: %s (bad magic/version)\n", mesh_path);
+    fclose(f);
+    return model;
+  }
+
+  model.has_animation = file_header.has_animation;
+
+  // Read texture name table
+  CookedTexName *tex_names = NULL;
+  U32 *tex_handles = NULL;
+
+  if (file_header.num_texture_names > 0)
+  {
+    tex_names = PushArray(arena, CookedTexName, file_header.num_texture_names);
+    fread(tex_names, sizeof(CookedTexName), file_header.num_texture_names, f);
+    tex_handles = PushArray(arena, U32, file_header.num_texture_names);
+
+    // Derive directory from mesh_path
+    char dir_buf[512] = {};
+    strncpy(dir_buf, mesh_path, sizeof(dir_buf) - 1);
+    char *last_slash = strrchr(dir_buf, '/');
+    if (last_slash)
+      *(last_slash + 1) = '\0';
+    else
+      dir_buf[0] = '\0';
+
+    for (U32 i = 0; i < file_header.num_texture_names; i++)
+    {
+      char full_path[640] = {};
+      snprintf(full_path, sizeof(full_path), "%s%s", dir_buf,
+               tex_names[i].name);
+      tex_handles[i] =
+          LoadCookedTexture(full_path, render_group, next_texture_handle);
+    }
+  }
+
+  // Read submeshes
+  for (U32 sm_i = 0; sm_i < file_header.num_submeshes; sm_i++)
+  {
+    if (model.num_nodes >= 32)
+      break;
+
+    CookedSubMeshHeader sm_header = {};
+    fread(&sm_header, sizeof(sm_header), 1, f);
+
+    FBXNode node = {};
+    node.textures = default_textures;
+
+    // Assign textures from the name table
+    if (tex_handles)
+    {
+      if (sm_header.tex_albedo_index != 0xFFFFFFFF &&
+          sm_header.tex_albedo_index < file_header.num_texture_names)
+        node.textures.albedo = tex_handles[sm_header.tex_albedo_index];
+      if (sm_header.tex_normal_index != 0xFFFFFFFF &&
+          sm_header.tex_normal_index < file_header.num_texture_names)
+        node.textures.normal = tex_handles[sm_header.tex_normal_index];
+      if (sm_header.tex_orm_index != 0xFFFFFFFF &&
+          sm_header.tex_orm_index < file_header.num_texture_names)
+        node.textures.metallic = tex_handles[sm_header.tex_orm_index];
+    }
+
+    // Read vertices
+    node.vertex_count = sm_header.vertex_count;
+    node.vertices = PushArray(arena, Vertex, node.vertex_count);
+    for (U32 i = 0; i < node.vertex_count; i++)
+    {
+      CookedVertex cv;
+      fread(&cv, sizeof(CookedVertex), 1, f);
+      node.vertices[i].position = {cv.position[0], cv.position[1],
+                                   cv.position[2]};
+      node.vertices[i].normal = {cv.normal[0], cv.normal[1], cv.normal[2]};
+      node.vertices[i].tangent = {cv.tangent[0], cv.tangent[1], cv.tangent[2]};
+      node.vertices[i].tex_coord = {cv.tex_coord[0], cv.tex_coord[1]};
+      for (int w = 0; w < 4; w++)
+      {
+        node.vertices[i].bone_indices[w] = cv.bone_indices[w];
+        node.vertices[i].bone_weights[w] = cv.bone_weights[w];
+      }
+    }
+
+    // Read bones
+    node.num_bones = sm_header.bone_count;
+    if (node.num_bones > 0)
+    {
+      node.bone_nodes = PushArray(arena, void *, node.num_bones);
+      node.inverse_bind_matrices = PushArray(arena, Mat4, node.num_bones);
+
+      for (U32 b = 0; b < node.num_bones; b++)
+      {
+        CookedBoneInfo cb;
+        fread(&cb, sizeof(CookedBoneInfo), 1, f);
+        char *name_copy = PushArray(arena, char, MAX_BONE_NAME_LEN);
+        memcpy(name_copy, cb.name, MAX_BONE_NAME_LEN);
+        node.bone_nodes[b] = name_copy;
+
+        Mat4 inv_bind = {};
+        inv_bind.columns[0] = {
+            cb.inverse_bind_matrix[0], cb.inverse_bind_matrix[1],
+            cb.inverse_bind_matrix[2], cb.inverse_bind_matrix[3]};
+        inv_bind.columns[1] = {
+            cb.inverse_bind_matrix[4], cb.inverse_bind_matrix[5],
+            cb.inverse_bind_matrix[6], cb.inverse_bind_matrix[7]};
+        inv_bind.columns[2] = {
+            cb.inverse_bind_matrix[8], cb.inverse_bind_matrix[9],
+            cb.inverse_bind_matrix[10], cb.inverse_bind_matrix[11]};
+        inv_bind.columns[3] = {
+            cb.inverse_bind_matrix[12], cb.inverse_bind_matrix[13],
+            cb.inverse_bind_matrix[14], cb.inverse_bind_matrix[15]};
+        node.inverse_bind_matrices[b] = inv_bind;
+      }
+    }
+
+    model.nodes[model.num_nodes++] = node;
+  }
+
+  fclose(f);
 
   return model;
 }

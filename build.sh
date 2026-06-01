@@ -10,6 +10,16 @@ build_shaders() {
     xcrun -sdk macosx metallib build/shaders.air -o build/shaders.metallib
 }
 
+build_asset_builder() {
+    echo "Compiling Asset Builder..."
+    clang++ -g -O0 \
+        -std=c++17 \
+        -Wno-deprecated \
+        -I include/ \
+        src/asset_builder.cpp include/ufbx.c \
+        -o build/asset_builder
+}
+
 build_game() {
     echo "Compiling Game Code..."
     clang++ -g -O0 \
@@ -33,22 +43,28 @@ build_engine() {
 }
 
 usage() {
-    echo "Usage: $0 [-s] [-g] [-e] [-h]"
+    echo "Usage: $0 [-s] [-a] [-g] [-e] [-h]"
     echo "  -s   Build shaders only"
+    echo "  -a   Build asset builder only"
     echo "  -g   Build game code only"
     echo "  -e   Build engine only"
     echo "  -h   Show help"
 }
 
 do_shaders=false
+do_asset_builder=false
 do_game=false
 do_engine=false
 any_selected=false
 
-while getopts ":sgeh" opt; do
+while getopts ":sageh" opt; do
     case "$opt" in
         s)
             do_shaders=true
+            any_selected=true
+            ;;
+        a)
+            do_asset_builder=true
             any_selected=true
             ;;
         g)
@@ -73,11 +89,13 @@ done
 
 if [ "$any_selected" = false ]; then
     do_shaders=true
+    do_asset_builder=true
     do_game=true
     do_engine=true
 fi
 
 [ "$do_shaders" = true ] && build_shaders
+[ "$do_asset_builder" = true ] && build_asset_builder
 [ "$do_game" = true ] && build_game
 [ "$do_engine" = true ] && build_engine
 

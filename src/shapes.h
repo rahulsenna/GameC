@@ -22,3 +22,14 @@ FBXModel CreateTriangularPrism(Arena *arena, float width = 1.0f,
 FBXModel CreatePlane(Arena *arena, float size = 1000.0f);
 FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
                  U32 *next_texture_handle, MaterialTextures default_textures);
+
+// --- Cooked Asset Loaders ---
+// Load a pre-cooked binary .mesh file produced by the AssetBuilder.
+FBXModel LoadCookedMesh(Arena *arena, const char *mesh_path,
+                        RenderGroup *render_group, U32 *next_texture_handle,
+                        MaterialTextures default_textures);
+
+// Load a pre-cooked binary .tex file and push an upload command.
+// Returns the texture handle.
+U32 LoadCookedTexture(const char *tex_path, RenderGroup *render_group,
+                      U32 *next_tex_handle);

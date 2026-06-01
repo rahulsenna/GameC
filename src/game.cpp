@@ -2,11 +2,9 @@
 #include "math_utils.h"
 #include "shapes.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
-#define STB_IMAGE_IMPLEMENTATION
-
-#include "stb_image.h"
-#include "ufbx.h"
+#include <string.h>
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 {
@@ -27,8 +25,8 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
   group->size += total_size;
 }
 
-void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
-                              U32 height, void *pixels)
+void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
+                               U32 height)
 {
   U32 pixel_data_size = width * height * 4;
   U32 total_size = sizeof(RenderGroupEntryHeader) +
@@ -51,12 +49,8 @@ void PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
   entry->height = height;
 
   void *dst_pixels = (void *)(entry + 1);
-  for (U32 i = 0; i < pixel_data_size; ++i)
-  {
-    ((U8 *)dst_pixels)[i] = ((U8 *)pixels)[i];
-  }
-
   group->size += total_size;
+  return dst_pixels;
 }
 
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
@@ -87,21 +81,12 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   group->size += total_size;
 }
 
+// LoadTexture now delegates to the cooked binary loader.
+// Kept as a convenience wrapper for backward compatibility.
 U32 LoadTexture(const char *path, RenderGroup *render_group,
                 U32 *next_tex_handle)
 {
-  int width, height, channels;
-  stbi_set_flip_vertically_on_load(true);
-  unsigned char *data = stbi_load(path, &width, &height, &channels, 4);
-  if (data)
-  {
-    U32 handle = (*next_tex_handle)++;
-    PushUploadTextureCommand(render_group, handle, width, height, data);
-    stbi_image_free(data);
-    return handle;
-  }
-  printf("Failed to load texture: %s\n", path);
-  return 0;
+  return LoadCookedTexture(path, render_group, next_tex_handle);
 }
 
 extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
@@ -123,27 +108,29 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
 
     // Default textures
     U32 default_albedo = next_tex_handle++;
-    U32 white_pixel = 0xFFFFFFFF;
-    PushUploadTextureCommand(&out_output->render_group, default_albedo, 1, 1,
-                             &white_pixel);
+    void *albedo_dst = PushUploadTextureCommand(&out_output->render_group,
+                                                default_albedo, 1, 1);
+    *(U32 *)albedo_dst = 0xFFFFFFFF; // White
 
     U32 default_normal = next_tex_handle++;
-    U32 flat_normal_pixel = 0xFFFF8080; // A=255, B=255, G=128, R=128
-    PushUploadTextureCommand(&out_output->render_group, default_normal, 1, 1,
-                             &flat_normal_pixel);
+    void *normal_dst = PushUploadTextureCommand(&out_output->render_group,
+                                                default_normal, 1, 1);
+    *(U32 *)normal_dst = 0xFFFF8080; // Flat normal
 
     U32 default_metallic = next_tex_handle++;
-    U32 black_pixel = 0xFF000000;
-    PushUploadTextureCommand(&out_output->render_group, default_metallic, 1, 1,
-                             &black_pixel);
+    void *metallic_dst = PushUploadTextureCommand(&out_output->render_group,
+                                                  default_metallic, 1, 1);
+    *(U32 *)metallic_dst = 0xFF000000; // Black
 
     U32 default_roughness = next_tex_handle++;
-    PushUploadTextureCommand(&out_output->render_group, default_roughness, 1, 1,
-                             &white_pixel);
+    void *roughness_dst = PushUploadTextureCommand(&out_output->render_group,
+                                                   default_roughness, 1, 1);
+    *(U32 *)roughness_dst = 0xFFFFFFFF; // White
 
     U32 default_ao = next_tex_handle++;
-    PushUploadTextureCommand(&out_output->render_group, default_ao, 1, 1,
-                             &white_pixel);
+    void *ao_dst =
+        PushUploadTextureCommand(&out_output->render_group, default_ao, 1, 1);
+    *(U32 *)ao_dst = 0xFFFFFFFF; // White
 
     MaterialTextures default_textures = {};
     default_textures.albedo = default_albedo;
@@ -177,19 +164,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       state->player.prev_root_trans[i] = {0, 0, 0};
     }
 
-    // Load texture
-    int width, height, channels;
-    stbi_set_flip_vertically_on_load(true);
-    unsigned char *data =
-        stbi_load("assets/CustomUVChecker_byValle_1K.png", &width, &height,
-                  &channels, 4); // Force RGBA
-    if (data)
-    {
-      default_textures.albedo = next_tex_handle++;
-      PushUploadTextureCommand(&out_output->render_group,
-                               default_textures.albedo, width, height, data);
-      stbi_image_free(data);
-    }
+    // Load checker texture from cooked assets
+    default_textures.albedo =
+        LoadCookedTexture("assets_cooked/CustomUVChecker_byValle_1K.tex",
+                          &out_output->render_group, &next_tex_handle);
 
     // Generate Shapes
     state->num_models = 12;
@@ -197,22 +175,23 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
 
     MaterialTextures default_textures_local = default_textures;
 
+    // Load alien panels textures from cooked ORM-packed set
     MaterialTextures alien_textures_local = {};
-    alien_textures_local.albedo =
-        LoadTexture("assets/alien-panels-bl/alien-panels_albedo.png",
-                    &out_output->render_group, &next_tex_handle);
-    alien_textures_local.normal =
-        LoadTexture("assets/alien-panels-bl/alien-panels_normal-ogl.png",
-                    &out_output->render_group, &next_tex_handle);
-    alien_textures_local.metallic =
-        LoadTexture("assets/alien-panels-bl/alien-panels_metallic.png",
-                    &out_output->render_group, &next_tex_handle);
-    alien_textures_local.roughness =
-        LoadTexture("assets/alien-panels-bl/alien-panels_roughness.png",
-                    &out_output->render_group, &next_tex_handle);
-    alien_textures_local.ao =
-        LoadTexture("assets/alien-panels-bl/alien-panels_ao.png",
-                    &out_output->render_group, &next_tex_handle);
+    alien_textures_local.albedo = LoadCookedTexture(
+        "assets_cooked/alien-panels-bl/alien-panels-bl_albedo.tex",
+        &out_output->render_group, &next_tex_handle);
+    alien_textures_local.normal = LoadCookedTexture(
+        "assets_cooked/alien-panels-bl/alien-panels-bl_normal.tex",
+        &out_output->render_group, &next_tex_handle);
+    // ORM packed texture: R=AO, G=Roughness, B=Metallic
+    // For now we load the ORM as the metallic slot; the shader still
+    // samples separate channels, so this is a first-pass integration.
+    U32 orm_handle = LoadCookedTexture(
+        "assets_cooked/alien-panels-bl/alien-panels-bl_orm.tex",
+        &out_output->render_group, &next_tex_handle);
+    alien_textures_local.metallic = orm_handle;
+    alien_textures_local.roughness = orm_handle;
+    alien_textures_local.ao = orm_handle;
 
     state->models[0] = CreateSphere(arena);
     state->models[0].nodes[0].textures = alien_textures_local;
@@ -244,43 +223,44 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     state->models[9] = CreatePlane(arena, 1000.0f);
     state->models[9].nodes[0].textures = default_textures_local;
 
-    state->models[10] =
-        LoadFBX(arena, "assets/Sophie.fbx", &out_output->render_group,
-                &next_tex_handle, default_textures_local);
-    state->models[11] =
-        LoadFBX(arena, "assets/banana_leaves.fbx", &out_output->render_group,
-                &next_tex_handle, default_textures_local);
+    state->models[10] = LoadCookedMesh(
+        arena, "assets_cooked/Sophie.mesh", &out_output->render_group,
+        &next_tex_handle, default_textures_local);
+    state->models[11] = LoadCookedMesh(
+        arena, "assets_cooked/banana_leaves.mesh", &out_output->render_group,
+        &next_tex_handle, default_textures_local);
 
     // Initialize ozz types
     state->models[10].ozz_skeleton =
-        LoadSkeleton(arena, "assets/animations/Sophie_skeleton.ozz");
+        LoadSkeleton(arena, "assets_cooked/animations/Sophie_skeleton.ozz");
     state->models[10].has_animation = 1;
 
     auto sophie_skeleton = state->models[10].ozz_skeleton;
 
-    LoadAnimation(arena, "assets/animations/Idle_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/Idle_animation.ozz",
                   state->player.anim_clips[CLIP_IDLE_1], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/Idle-2_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/Idle-2_animation.ozz",
                   state->player.anim_clips[CLIP_IDLE_2], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/Idle-3_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/Idle-3_animation.ozz",
                   state->player.anim_clips[CLIP_IDLE_3], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/Standing Idle_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/Standing Idle_animation.ozz",
                   state->player.anim_clips[CLIP_IDLE_4], sophie_skeleton);
 
-    LoadAnimation(arena, "assets/animations/WalkingFemale_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/WalkingFemale_animation.ozz",
                   state->player.anim_clips[CLIP_WALK], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/Jogging_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/Jogging_animation.ozz",
                   state->player.anim_clips[CLIP_JOG], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/FastRun_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/FastRun_animation.ozz",
                   state->player.anim_clips[CLIP_FASTRUN], sophie_skeleton);
 
-    LoadAnimation(arena, "assets/animations/RunningJump_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/RunningJump_animation.ozz",
                   state->player.anim_clips[CLIP_JUMP_RUN], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/StandingJump1_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/StandingJump1_animation.ozz",
                   state->player.anim_clips[CLIP_JUMP_STAND_1], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/StandingJump2_animation.ozz",
+    LoadAnimation(arena, "assets_cooked/animations/StandingJump2_animation.ozz",
                   state->player.anim_clips[CLIP_JUMP_STAND_2], sophie_skeleton);
-    LoadAnimation(arena, "assets/animations/StandingJumpHigher_animation.ozz",
+    LoadAnimation(arena,
+                  "assets_cooked/animations/StandingJumpHigher_animation.ozz",
                   state->player.anim_clips[CLIP_JUMP_STAND_3], sophie_skeleton);
 
     state->models[10].num_soa_joints =
@@ -306,8 +286,9 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       for (U32 b = 0; b < node->num_bones; b++)
       {
         node->ozz_joint_mapping[b] = 0;
-        ufbx_node *bone_node = (ufbx_node *)node->bone_nodes[b];
-        const char *bone_name = bone_node->name.data;
+        // bone_nodes[b] now points to a char* bone name string
+        // (from cooked asset loader)
+        const char *bone_name = (const char *)node->bone_nodes[b];
         auto joint_names = state->models[10].ozz_skeleton->joint_names();
         for (int j = 0; j < state->models[10].ozz_skeleton->num_joints(); j++)
         {
