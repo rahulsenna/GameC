@@ -104,7 +104,7 @@ U32 LoadTexture(const char *path, RenderGroup *render_group,
   return 0;
 }
 
-extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
+extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
                                     GameOutput *out_output)
 {
   if (arena->pos == ARENA_HEADER_SIZE)
@@ -322,7 +322,6 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
     }
   }
 
-  float dt = 0.016f;
   state->time += dt;
 
   // --- Camera Update ---

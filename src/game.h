@@ -191,5 +191,5 @@ struct GameOutput
   RenderGroup render_group;
 };
 
-extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
+extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
                                     GameOutput *out_output);

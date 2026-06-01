@@ -4,6 +4,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <dlfcn.h>
+#include <mach/mach_time.h>
 #include <sys/stat.h>
 
 @protocol MTLDevice;
@@ -15,7 +16,8 @@ static bool global_running = true;
 static GameInput global_input = {};
 
 // --- Game Code Loading ---
-typedef void (*GameUpdateAndRenderFunc)(Arena *, GameInput *, GameOutput *);
+typedef void (*GameUpdateAndRenderFunc)(Arena *, GameInput *, float,
+                                        GameOutput *);
 
 struct GameCode
 {
@@ -220,10 +222,22 @@ int main(int argc, const char *argv[])
     static Arena *render_arena = ArenaAlloc(&render_arena_params);
     static U8 *render_buffer = PushArrayNoZero(render_arena, U8, GB(1));
 
+    mach_timebase_info_data_t timebase_info;
+    mach_timebase_info(&timebase_info);
+    uint64_t previous_time = mach_absolute_time();
+
     while (global_running)
     {
       @autoreleasepool
       {
+        uint64_t current_time = mach_absolute_time();
+        float dt = (float)(current_time - previous_time) *
+                   (float)timebase_info.numer / (float)timebase_info.denom /
+                   1e9f;
+        previous_time = current_time;
+        if (dt > 0.1f)
+          dt = 0.1f; // Clamp to avoid physics explosion on breakpoint/lag
+
         time_t new_game_time = GetFileWriteTime("build/game.dylib");
         if (new_game_time != 0 &&
             new_game_time != global_game_code.last_write_time)
@@ -255,7 +269,7 @@ int main(int argc, const char *argv[])
 
         if (global_game_code.UpdateAndRender)
         {
-          global_game_code.UpdateAndRender(global_arena, &global_input,
+          global_game_code.UpdateAndRender(global_arena, &global_input, dt,
                                            &output);
         }
 
