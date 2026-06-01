@@ -292,6 +292,12 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
                                 MTL::RenderStageFragment);
   }
 
+  commandEncoder->setVertexBuffer(global_root_buffer, 0, 0);
+  commandEncoder->setFragmentBuffer(global_root_buffer, 0, 0);
+  commandEncoder->setFragmentBuffer(global_texture_argument_buffer, 0, 2);
+
+  int current_shader_type = -1;
+
   // Second pass
   offset = 0;
   while (offset < output->render_group.size)
@@ -324,21 +330,17 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       RenderGroupEntry_DrawMesh *entry =
           (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
 
-      if (entry->shader_type == 1)
+      if (entry->shader_type != current_shader_type)
       {
-        commandEncoder->setRenderPipelineState(global_grid_pipeline_state);
-      }
-      else
-      {
-        commandEncoder->setRenderPipelineState(global_pipeline_state);
-      }
-
-      commandEncoder->setVertexBuffer(global_root_buffer, 0, 0);
-      commandEncoder->setFragmentBuffer(global_root_buffer, 0, 0);
-
-      if (entry->shader_type == 0)
-      {
-        commandEncoder->setFragmentBuffer(global_texture_argument_buffer, 0, 2);
+        if (entry->shader_type == 1)
+        {
+          commandEncoder->setRenderPipelineState(global_grid_pipeline_state);
+        }
+        else
+        {
+          commandEncoder->setRenderPipelineState(global_pipeline_state);
+        }
+        current_shader_type = entry->shader_type;
       }
 
       commandEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
