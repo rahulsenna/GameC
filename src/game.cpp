@@ -4,16 +4,9 @@
 #include <math.h>
 #include <stdlib.h>
 #define STB_IMAGE_IMPLEMENTATION
-#include "ozz/animation/runtime/animation.h"
-#include "ozz/animation/runtime/local_to_model_job.h"
-#include "ozz/animation/runtime/sampling_job.h"
-#include "ozz/animation/runtime/skeleton.h"
-#include "ozz/base/io/archive.h"
-#include "ozz/base/io/stream.h"
-#include "ozz/base/maths/soa_transform.h"
+
 #include "stb_image.h"
 #include "ufbx.h"
-#include <new>
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 {
@@ -260,65 +253,35 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input,
 
     // Initialize ozz types
     state->models[10].ozz_skeleton =
-        PushStruct(arena, ozz::animation::Skeleton);
-    new (state->models[10].ozz_skeleton) ozz::animation::Skeleton();
+        LoadSkeleton(arena, "assets/animations/Sophie_skeleton.ozz");
+    state->models[10].has_animation = 1;
 
-    {
-      ozz::io::File file("assets/animations/Sophie_skeleton.ozz", "rb");
-      if (file.opened())
-      {
-        ozz::io::IArchive archive(&file);
-        if (archive.TestTag<ozz::animation::Skeleton>())
-        {
-          archive >> *state->models[10].ozz_skeleton;
-          state->models[10].has_animation = 1;
-        }
-      }
-    }
+    auto sophie_skeleton = state->models[10].ozz_skeleton;
 
-    auto load_anim = [&](const char *path, OzzAnimation &anim_out)
-    {
-      anim_out.anim = PushStruct(arena, ozz::animation::Animation);
-      anim_out.cache = PushStruct(arena, ozz::animation::SamplingJob::Context);
-      new (anim_out.anim) ozz::animation::Animation();
-      new (anim_out.cache) ozz::animation::SamplingJob::Context();
+    LoadAnimation(arena, "assets/animations/Idle_animation.ozz",
+                  state->player.anim_clips[CLIP_IDLE_1], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/Idle-2_animation.ozz",
+                  state->player.anim_clips[CLIP_IDLE_2], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/Idle-3_animation.ozz",
+                  state->player.anim_clips[CLIP_IDLE_3], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/Standing Idle_animation.ozz",
+                  state->player.anim_clips[CLIP_IDLE_4], sophie_skeleton);
 
-      ozz::io::File file(path, "rb");
-      if (file.opened())
-      {
-        ozz::io::IArchive archive(&file);
-        if (archive.TestTag<ozz::animation::Animation>())
-        {
-          archive >> *anim_out.anim;
-        }
-      }
-      anim_out.cache->Resize(state->models[10].ozz_skeleton->num_joints());
-    };
+    LoadAnimation(arena, "assets/animations/WalkingFemale_animation.ozz",
+                  state->player.anim_clips[CLIP_WALK], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/Jogging_animation.ozz",
+                  state->player.anim_clips[CLIP_JOG], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/FastRun_animation.ozz",
+                  state->player.anim_clips[CLIP_FASTRUN], sophie_skeleton);
 
-    load_anim("assets/animations/Idle_animation.ozz",
-              state->player.anim_clips[CLIP_IDLE_1]);
-    load_anim("assets/animations/Idle-2_animation.ozz",
-              state->player.anim_clips[CLIP_IDLE_2]);
-    load_anim("assets/animations/Idle-3_animation.ozz",
-              state->player.anim_clips[CLIP_IDLE_3]);
-    load_anim("assets/animations/Standing Idle_animation.ozz",
-              state->player.anim_clips[CLIP_IDLE_4]);
-
-    load_anim("assets/animations/WalkingFemale_animation.ozz",
-              state->player.anim_clips[CLIP_WALK]);
-    load_anim("assets/animations/Jogging_animation.ozz",
-              state->player.anim_clips[CLIP_JOG]);
-    load_anim("assets/animations/FastRun_animation.ozz",
-              state->player.anim_clips[CLIP_FASTRUN]);
-
-    load_anim("assets/animations/RunningJump_animation.ozz",
-              state->player.anim_clips[CLIP_JUMP_RUN]);
-    load_anim("assets/animations/StandingJump1_animation.ozz",
-              state->player.anim_clips[CLIP_JUMP_STAND_1]);
-    load_anim("assets/animations/StandingJump2_animation.ozz",
-              state->player.anim_clips[CLIP_JUMP_STAND_2]);
-    load_anim("assets/animations/StandingJumpHigher_animation.ozz",
-              state->player.anim_clips[CLIP_JUMP_STAND_3]);
+    LoadAnimation(arena, "assets/animations/RunningJump_animation.ozz",
+                  state->player.anim_clips[CLIP_JUMP_RUN], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/StandingJump1_animation.ozz",
+                  state->player.anim_clips[CLIP_JUMP_STAND_1], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/StandingJump2_animation.ozz",
+                  state->player.anim_clips[CLIP_JUMP_STAND_2], sophie_skeleton);
+    LoadAnimation(arena, "assets/animations/StandingJumpHigher_animation.ozz",
+                  state->player.anim_clips[CLIP_JUMP_STAND_3], sophie_skeleton);
 
     state->models[10].num_soa_joints =
         state->models[10].ozz_skeleton->num_soa_joints();

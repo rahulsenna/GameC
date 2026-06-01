@@ -17,7 +17,7 @@ build_game() {
         -Wno-deprecated \
         -I include/ \
         -dynamiclib \
-        src/game.cpp src/math_utils.cpp include/base_arena.cpp src/shapes.cpp include/ufbx.c \
+        src/game.cpp src/animation.cpp src/math_utils.cpp include/base_arena.cpp src/shapes.cpp include/ufbx.c \
         lib/ozz/libozz_animation_r.a lib/ozz/libozz_base_r.a \
         -o build/game.dylib
 }

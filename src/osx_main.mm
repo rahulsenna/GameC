@@ -150,16 +150,22 @@ static time_t global_shader_write_time = 0;
 }
 - (void)flagsChanged:(NSEvent *)event
 {
-  if ([event modifierFlags] & NSEventModifierFlagShift) {
+  if ([event modifierFlags] & NSEventModifierFlagShift)
+  {
     global_input.key_shift = 1;
-  } else {
+  }
+  else
+  {
     global_input.key_shift = 0;
   }
 
-  if (([event modifierFlags] & NSEventModifierFlagControl) || 
-      ([event modifierFlags] & NSEventModifierFlagOption)) {
+  if (([event modifierFlags] & NSEventModifierFlagControl) ||
+      ([event modifierFlags] & NSEventModifierFlagOption))
+  {
     global_input.key_ctrl = 1;
-  } else {
+  }
+  else
+  {
     global_input.key_ctrl = 0;
   }
 }

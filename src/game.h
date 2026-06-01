@@ -2,14 +2,7 @@
 #include "base_arena.h"
 #include "math_utils.h"
 
-// Ozz-animation headers
-#include "ozz/animation/runtime/animation.h"
-#include "ozz/animation/runtime/blending_job.h"
-#include "ozz/animation/runtime/local_to_model_job.h"
-#include "ozz/animation/runtime/sampling_job.h"
-#include "ozz/animation/runtime/skeleton.h"
-#include "ozz/base/maths/simd_math.h"
-#include "ozz/base/maths/soa_transform.h"
+#include "animation.h"
 struct GameInput
 {
   B32 key_w;
@@ -77,39 +70,6 @@ struct FBXModel
   U32 num_soa_joints;
   ozz::math::SoaTransform *local_transforms;
   ozz::math::Float4x4 *model_matrices;
-};
-
-struct OzzAnimation
-{
-  ozz::animation::Animation *anim;
-  ozz::animation::SamplingJob::Context *cache;
-};
-
-enum AnimLayer
-{
-  LAYER_IDLE = 0,
-  LAYER_IDLE_PREV,
-  LAYER_WALK,
-  LAYER_JOG,
-  LAYER_FASTRUN,
-  LAYER_JUMP,
-  NUM_ANIM_LAYERS
-};
-
-enum AnimClip
-{
-  CLIP_IDLE_1 = 0,
-  CLIP_IDLE_2,
-  CLIP_IDLE_3,
-  CLIP_IDLE_4,
-  CLIP_WALK,
-  CLIP_JOG,
-  CLIP_FASTRUN,
-  CLIP_JUMP_RUN,
-  CLIP_JUMP_STAND_1,
-  CLIP_JUMP_STAND_2,
-  CLIP_JUMP_STAND_3,
-  NUM_ANIM_CLIPS
 };
 
 struct PlayerController
