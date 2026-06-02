@@ -716,6 +716,13 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
   base_uniforms.camera_pos = state->camera.position;
   base_uniforms.ambient_intensity = 0.2f;
 
+  Vec3 light_target = state->player.position;
+  Vec3 light_pos = light_target + base_uniforms.light_dir * 30.0f;
+  Mat4 light_view = math_make_look_at(light_pos, light_target, Vec3{0, 1, 0});
+  Mat4 light_proj =
+      math_make_orthographic(-20.0f, 20.0f, -20.0f, 20.0f, 0.1f, 100.0f);
+  base_uniforms.light_vp_matrix = light_proj * light_view;
+
   // 1. Draw Infinite Grid Plane
   {
     Mat4 model_matrix = Mat4{

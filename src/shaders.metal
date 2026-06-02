@@ -15,6 +15,7 @@ struct Uniforms
 {
   float4x4 mvp_matrix;
   float4x4 model_matrix;
+  float4x4 light_vp_matrix;
   float3 light_dir;
   float3 light_color;
   float3 camera_pos;
@@ -107,6 +108,48 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
   return out;
 }
 
+struct RasterizerDataShadow
+{
+  float4 position [[position]];
+};
+
+vertex RasterizerDataShadow shadow_vertex_main(uint vertexID [[vertex_id]],
+                                               constant RootData *root
+                                               [[buffer(0)]],
+                                               constant Uniforms &uniforms
+                                               [[buffer(1)]])
+{
+  RasterizerDataShadow out;
+
+  uint id = uniforms.vertex_offset + vertexID;
+  float4 local_pos = float4(root->vertex_heap[id].position, 1.0);
+
+  if (uniforms.has_bones > 0)
+  {
+    device float4x4 *bone_mats =
+        (device float4x4 *)((device char *)root->vertex_heap +
+                            uniforms.bone_matrix_offset);
+
+    local_pos = float4(0.0);
+    for (int i = 0; i < 4; i++)
+    {
+      float weight = root->vertex_heap[id].bone_weights[i];
+      if (weight > 0.0)
+      {
+        uint bone_idx = root->vertex_heap[id].bone_indices[i];
+        float4x4 bone_matrix = bone_mats[bone_idx];
+        local_pos +=
+            (bone_matrix * float4(root->vertex_heap[id].position, 1.0)) *
+            weight;
+      }
+    }
+    local_pos.w = 1.0;
+  }
+
+  out.position = uniforms.light_vp_matrix * uniforms.model_matrix * local_pos;
+  return out;
+}
+
 constant float PI = 3.14159265359;
 
 float DistributionGGX(float3 N, float3 H, float roughness)
@@ -152,7 +195,8 @@ float3 fresnelSchlick(float cosTheta, float3 F0)
 fragment float4 fragment_main(RasterizerData in [[stage_in]],
                               constant RootData *root [[buffer(0)]],
                               constant Uniforms &uniforms [[buffer(1)]],
-                              constant TextureHeap &texture_heap [[buffer(2)]])
+                              constant TextureHeap &texture_heap [[buffer(2)]],
+                              depth2d<float> shadow_map [[texture(0)]])
 {
   constexpr sampler textureSampler(mag_filter::linear, min_filter::linear,
                                    mip_filter::linear, s_address::repeat,
@@ -234,7 +278,45 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
   float3 F0 = float3(0.04);
   F0 = mix(F0, albedo, metallic);
 
+  // Shadow mapping calculation
+  float4 frag_pos_light_space =
+      uniforms.light_vp_matrix * float4(in.world_position, 1.0);
+  float3 proj_coords = frag_pos_light_space.xyz / frag_pos_light_space.w;
+  // Convert from [-1, 1] to [0, 1] for texture coordinates (Metal depth is 0 to
+  // 1, but X,Y are -1 to 1)
+  proj_coords.x = proj_coords.x * 0.5 + 0.5;
+  proj_coords.y = -proj_coords.y * 0.5 + 0.5; // Flip Y
+
+  float shadow = 0.0;
+  if (proj_coords.z >= 0.0 && proj_coords.z <= 1.0 && proj_coords.x >= 0.0 &&
+      proj_coords.x <= 1.0 && proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
+  {
+    constexpr sampler shadowSampler(coord::normalized, filter::linear,
+                                    mip_filter::none, address::clamp_to_edge,
+                                    compare_func::less_equal);
+
+    // PCF
+    float current_depth = proj_coords.z;
+    float bias = max(0.005 * (1.0 - dot(N, L)), 0.0005);
+
+    for (int x = -1; x <= 1; ++x)
+    {
+      for (int y = -1; y <= 1; ++y)
+      {
+        float2 offset = float2(x, y) / float2(4096.0, 4096.0);
+        shadow += shadow_map.sample_compare(
+            shadowSampler, proj_coords.xy + offset, current_depth - bias);
+      }
+    }
+    shadow /= 9.0;
+  }
+  else
+  {
+    shadow = 1.0; // Outside frustum, no shadow
+  }
+
   // Calculate per-light radiance
+
   float3 radiance = uniforms.light_color;
 
   // Cook-Torrance BRDF
@@ -252,7 +334,7 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
 
   float NdotL = max(dot(N, L), 0.0);
 
-  float3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+  float3 Lo = (kD * albedo / PI + specular) * radiance * NdotL * shadow;
 
   // Fake IBL for ambient lighting
   float3 R = reflect(-V, N);

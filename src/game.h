@@ -203,6 +203,7 @@ struct Uniforms
 {
   Mat4 mvp_matrix;
   Mat4 model_matrix;
+  Mat4 light_vp_matrix;
   Vec3 light_dir;
   Vec3 light_color;
   Vec3 camera_pos;
