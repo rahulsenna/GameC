@@ -82,7 +82,7 @@ static bool CookTextureASTC(const fs::path &src_path, const fs::path &dst_path,
   std::string temp_ktx = dst_path.string() + ".temp.ktx";
 
   std::string cmd = "xcrun TextureConverter --compression_format=ASTC4x4 "
-                    "--compression_quality=Normal ";
+                    "--compression_quality=Normal --alpha_mode=Preserve ";
   if (!is_srgb)
   {
     cmd += "--channel_weighting=Linear ";
