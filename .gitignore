@@ -4,4 +4,4 @@ build/**
 **.DS_Store**
 lib/**
 utilities/ozz/*
-assets_cooked/**
+assets_**
