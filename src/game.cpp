@@ -756,7 +756,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
                                        state->camera.position + front, up);
 
   float fov = 60.0f * (3.14159f / 180.0f);
-  float aspect = 800.0f / 800.0f;
+  float aspect = 2880.0f / 1864.0f;
   Mat4 proj_matrix = math_make_perspective(fov, aspect, 0.1f, 100.0f);
 
   Mat4 vp_matrix = proj_matrix * view_matrix;

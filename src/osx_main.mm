@@ -189,7 +189,7 @@ int main(int argc, const char *argv[])
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    NSRect frame = NSMakeRect(0, 0, 800, 600);
+    NSRect frame = NSMakeRect(0, 0, 2880, 1864);
     NSWindow *window =
         [[NSWindow alloc] initWithContentRect:frame
                                     styleMask:(NSWindowStyleMaskTitled |
