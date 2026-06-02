@@ -149,6 +149,150 @@ U32 LoadTexture(const char *path, RenderGroup *render_group,
   return LoadCookedTexture(path, render_group, next_tex_handle);
 }
 
+void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
+                                MaterialTextures textures, U32 shader_type,
+                                U32 vertex_count, const Vertex *vertices)
+{
+  U32 total_size = sizeof(RenderGroupEntryHeader) +
+                   sizeof(RenderGroupEntry_DrawDynamicMesh) +
+                   vertex_count * sizeof(Vertex);
+  Assert(group->size + total_size <= group->max_size);
+
+  RenderGroupEntryHeader *header =
+      (RenderGroupEntryHeader *)(group->base + group->size);
+  header->type = RenderGroupEntryType_DrawDynamicMesh;
+
+  RenderGroupEntry_DrawDynamicMesh *entry =
+      (RenderGroupEntry_DrawDynamicMesh *)(header + 1);
+  entry->uniforms = uniforms;
+  entry->uniforms.albedo_tex = textures.albedo;
+  entry->uniforms.normal_tex = textures.normal;
+  entry->uniforms.metallic_tex = textures.metallic;
+  entry->uniforms.roughness_tex = textures.roughness;
+  entry->uniforms.ao_tex = textures.ao;
+  entry->shader_type = shader_type;
+  entry->vertex_count = vertex_count;
+
+  Vertex *dst_verts = (Vertex *)(entry + 1);
+  memcpy(dst_verts, vertices, vertex_count * sizeof(Vertex));
+
+  group->size += total_size;
+}
+
+Font LoadCookedFont(Arena *arena, const char *path, RenderGroup *render_group,
+                    U32 *next_tex_handle)
+{
+  Font font = {};
+  FILE *f = fopen(path, "rb");
+  if (!f)
+    return font;
+
+  CookedFontHeader header;
+  fread(&header, sizeof(header), 1, f);
+
+  if (header.magic != FONT_MAGIC || header.version != FONT_VERSION)
+  {
+    fclose(f);
+    return font;
+  }
+
+  font.line_height = header.line_height;
+  font.num_glyphs = header.num_glyphs;
+  font.glyphs = PushArray(arena, CookedGlyph, header.num_glyphs);
+  fread(font.glyphs, sizeof(CookedGlyph), header.num_glyphs, f);
+
+  CookedTexFileHeader tex_header;
+  fread(&tex_header, sizeof(tex_header), 1, f);
+
+  U32 tex_size = tex_header.width * tex_header.height; // R8Unorm
+  U32 handle = (*next_tex_handle)++;
+  void *dst_pixels =
+      PushUploadTextureCommand(render_group, handle, tex_header.width,
+                               tex_header.height, 3, 1, tex_size);
+  fread(dst_pixels, 1, tex_size, f);
+
+  fclose(f);
+  font.texture_handle = handle;
+  return font;
+}
+
+void PushDrawTextCommand(RenderGroup *group, Font *font, Uniforms base_uniforms,
+                         const char *text, Vec3 position, float scale)
+{
+  if (!font->texture_handle || !text)
+    return;
+
+  U32 len = strlen(text);
+  if (len == 0)
+    return;
+
+  if (len > 1024)
+    len = 1024;
+  Vertex verts[1024 * 6];
+  U32 v_count = 0;
+
+  float start_x = position.x;
+  float start_y = position.y;
+  float z = position.z;
+
+  for (U32 i = 0; i < len; ++i)
+  {
+    unsigned char c = text[i];
+    if (c >= 32 && c < 128)
+    {
+      CookedGlyph &g = font->glyphs[c - 32];
+
+      float x0 = start_x + g.x0 * scale;
+      float y0 = start_y - g.y0 * scale;
+      float x1 = start_x + g.x1 * scale;
+      float y1 = start_y - g.y1 * scale;
+
+      float u0 = g.u0;
+      float v0 = g.v0;
+      float u1 = g.u1;
+      float v1 = g.v1;
+
+      Vertex v[4] = {};
+      v[0].position = {x0, y0, z};
+      v[0].tex_coord = {u0, v0};
+      v[1].position = {x1, y0, z};
+      v[1].tex_coord = {u1, v0};
+      v[2].position = {x1, y1, z};
+      v[2].tex_coord = {u1, v1};
+      v[3].position = {x0, y1, z};
+      v[3].tex_coord = {u0, v1};
+
+      for (int j = 0; j < 4; j++)
+      {
+        v[j].normal = {0, 0, 1};
+        v[j].tangent = {1, 0, 0};
+      }
+
+      verts[v_count++] = v[0]; // TL
+      verts[v_count++] = v[3]; // BL
+      verts[v_count++] = v[2]; // BR
+
+      verts[v_count++] = v[0]; // TL
+      verts[v_count++] = v[2]; // BR
+      verts[v_count++] = v[1]; // TR
+
+      start_x += g.advance * scale;
+    }
+    else if (c == '\n')
+    {
+      start_x = position.x;
+      start_y -= font->line_height * scale;
+    }
+  }
+
+  if (v_count > 0)
+  {
+    MaterialTextures tex = {};
+    tex.albedo = font->texture_handle;
+    PushDrawDynamicMeshCommand(group, base_uniforms, tex, 2, v_count, verts);
+  }
+}
+
 static void UploadModelGeometry(GameState *state, RenderGroup *render_group,
                                 FBXModel *model)
 {
@@ -311,6 +455,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     state->models[11] = LoadCookedMesh(
         arena, "assets_cooked/banana_leaves.mesh", &out_output->render_group,
         &next_tex_handle, default_textures_local);
+
+    state->main_font =
+        LoadCookedFont(arena, "assets_cooked/manifoldcf-regular.font",
+                       &out_output->render_group, &next_tex_handle);
 
     for (U32 i = 0; i < state->num_models; ++i)
     {
@@ -1018,5 +1166,29 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
                             0, node->vertex_count, node->vertex_offset);
       }
     }
+  }
+
+  // 6. Draw UI Text (FPS & Frame Time)
+  {
+    static float avg_fps = 0.0f;
+    static float avg_dt = 0.0f;
+    if (dt > 0.0001f)
+    {
+      avg_fps = avg_fps * 0.95f + (1.0f / dt) * 0.05f;
+      avg_dt = avg_dt * 0.95f + (dt * 1000.0f) * 0.05f;
+    }
+
+    char ui_text[256];
+    snprintf(ui_text, sizeof(ui_text), "FPS: %.0f\nFrame: %.2f ms", avg_fps,
+             avg_dt);
+
+    Mat4 ui_proj = math_make_orthographic(0, 800, 0, 800, -1, 1);
+    Uniforms ui_uniforms = base_uniforms;
+    ui_uniforms.model_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
+                                    Vec4{0, 0, 1, 0}, Vec4{0, 0, 0, 1}};
+    ui_uniforms.mvp_matrix = ui_proj * ui_uniforms.model_matrix;
+
+    PushDrawTextCommand(&out_output->render_group, &state->main_font,
+                        ui_uniforms, ui_text, Vec3{20.0f, 750.0f, 0.0f}, 0.5f);
   }
 }

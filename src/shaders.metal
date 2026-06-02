@@ -315,3 +315,29 @@ fragment float4 grid_fragment_main(RasterizerData in [[stage_in]],
 
   return float4(0.8, 0.8, 0.8, alpha * fade);
 }
+
+fragment float4 text_fragment_main(RasterizerData in [[stage_in]],
+                                   constant Uniforms &uniforms [[buffer(1)]],
+                                   constant TextureHeap &texture_heap
+                                   [[buffer(2)]])
+{
+  constexpr sampler textureSampler(mag_filter::linear, min_filter::linear,
+                                   mip_filter::linear, s_address::clamp_to_edge,
+                                   t_address::clamp_to_edge);
+
+  float alpha = 1.0;
+  if (uniforms.albedo_tex != 0)
+  {
+    alpha = texture_heap.textures[uniforms.albedo_tex]
+                .sample(textureSampler, in.tex_coord)
+                .r;
+  }
+
+  if (alpha < 0.01)
+  {
+    discard_fragment();
+  }
+
+  // Draw white text
+  return float4(1.0, 1.0, 1.0, alpha);
+}

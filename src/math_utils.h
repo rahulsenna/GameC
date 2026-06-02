@@ -77,6 +77,8 @@ Mat4 math_make_rotation_z(float angle);
 Mat4 math_make_scale(Vec3 s);
 Mat4 math_make_perspective(float fovy_radians, float aspect, float nearZ,
                            float farZ);
+Mat4 math_make_orthographic(float left, float right, float bottom, float top,
+                            float nearZ, float farZ);
 Mat4 math_make_look_at(Vec3 eye, Vec3 target, Vec3 up);
 
 Mat4 operator*(const Mat4 &a, const Mat4 &b);

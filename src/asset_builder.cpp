@@ -12,6 +12,8 @@
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
 
 #include "ufbx.h"
 
@@ -792,6 +794,93 @@ static void CookTextureSet(const fs::path &src_dir, const fs::path &dst_dir,
 }
 
 // ============================================================================
+// Font Cooking
+// ============================================================================
+
+static bool CookFont(const fs::path &src_path, const fs::path &dst_path,
+                     bool force)
+{
+  if (!force && !NeedsRecook(src_path, dst_path))
+    return true;
+
+  printf("  [FONT] %s\n", src_path.filename().c_str());
+
+  FILE *f = fopen(src_path.c_str(), "rb");
+  if (!f)
+    return false;
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  unsigned char *ttf_buffer = (unsigned char *)malloc(size);
+  fread(ttf_buffer, 1, size, f);
+  fclose(f);
+
+  stbtt_fontinfo font;
+  if (!stbtt_InitFont(&font, ttf_buffer,
+                      stbtt_GetFontOffsetForIndex(ttf_buffer, 0)))
+  {
+    free(ttf_buffer);
+    return false;
+  }
+
+  // Baking parameters
+  int atlas_width = 1024;
+  int atlas_height = 1024;
+  float font_size = 64.0f;
+  unsigned char *bitmap = (unsigned char *)malloc(atlas_width * atlas_height);
+
+  stbtt_bakedchar cdata[96]; // ASCII 32..127 is 96 chars
+  stbtt_BakeFontBitmap(ttf_buffer, 0, font_size, bitmap, atlas_width,
+                       atlas_height, 32, 96, cdata);
+
+  CookedFontHeader header = {};
+  header.magic = FONT_MAGIC;
+  header.version = FONT_VERSION;
+  header.num_glyphs = 96;
+
+  // Get line height
+  int ascent, descent, lineGap;
+  stbtt_GetFontVMetrics(&font, &ascent, &descent, &lineGap);
+  float scale = stbtt_ScaleForPixelHeight(&font, font_size);
+  header.line_height = (ascent - descent + lineGap) * scale;
+
+  CookedGlyph glyphs[96];
+  for (int i = 0; i < 96; i++)
+  {
+    glyphs[i].u0 = cdata[i].x0 / (float)atlas_width;
+    glyphs[i].v0 = cdata[i].y0 / (float)atlas_height;
+    glyphs[i].u1 = cdata[i].x1 / (float)atlas_width;
+    glyphs[i].v1 = cdata[i].y1 / (float)atlas_height;
+    glyphs[i].x0 = cdata[i].xoff;
+    glyphs[i].y0 = cdata[i].yoff;
+    glyphs[i].x1 = cdata[i].xoff + (cdata[i].x1 - cdata[i].x0);
+    glyphs[i].y1 = cdata[i].yoff + (cdata[i].y1 - cdata[i].y0);
+    glyphs[i].advance = cdata[i].xadvance;
+  }
+
+  CookedTexFileHeader tex_header = {};
+  tex_header.magic = TEX_MAGIC;
+  tex_header.version = TEX_VERSION;
+  tex_header.width = atlas_width;
+  tex_header.height = atlas_height;
+  tex_header.format = TexFormat_R8_UNorm;
+  tex_header.num_mips = 1;
+  tex_header.is_orm = 0;
+
+  EnsureDir(dst_path.parent_path());
+  FILE *out = fopen(dst_path.c_str(), "wb");
+  fwrite(&header, sizeof(header), 1, out);
+  fwrite(glyphs, sizeof(CookedGlyph), 96, out);
+  fwrite(&tex_header, sizeof(tex_header), 1, out);
+  fwrite(bitmap, 1, atlas_width * atlas_height, out);
+  fclose(out);
+
+  free(bitmap);
+  free(ttf_buffer);
+  return true;
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -927,9 +1016,29 @@ int main(int argc, char *argv[])
   }
   printf("\n");
 
+  // --- Pass 5: Cook Fonts (.ttf) ---
+  printf("--- Pass 5: Fonts ---\n");
+  int fonts_cooked = 0;
+  for (auto &entry : fs::directory_iterator(src_dir))
+  {
+    if (!entry.is_regular_file())
+      continue;
+    if (entry.path().extension() != ".ttf" &&
+        entry.path().extension() != ".otf")
+      continue;
+
+    std::string base_name = entry.path().stem().string();
+    fs::path dst = dst_dir / (base_name + ".font");
+
+    if (CookFont(entry.path(), dst, force))
+      fonts_cooked++;
+  }
+  printf("\n");
+
   printf("========================================\n");
-  printf("  Done! Cooked %d meshes, %d texture sets, %d standalone textures\n",
-         meshes_cooked, tex_sets_cooked, standalone_tex_cooked);
+  printf("  Done! Cooked %d meshes, %d texture sets, %d standalone textures, "
+         "%d fonts\n",
+         meshes_cooked, tex_sets_cooked, standalone_tex_cooked, fonts_cooked);
   printf("========================================\n");
 
   return 0;

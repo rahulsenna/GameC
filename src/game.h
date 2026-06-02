@@ -1,4 +1,5 @@
 #pragma once
+#include "asset_formats.h"
 #include "base_arena.h"
 #include "math_utils.h"
 
@@ -132,6 +133,14 @@ struct PlayerController
   Vec3 prev_root_trans[NUM_ANIM_LAYERS];
 };
 
+struct Font
+{
+  U32 texture_handle;
+  float line_height;
+  U32 num_glyphs;
+  struct CookedGlyph *glyphs;
+};
+
 struct GameState
 {
   B32 is_initialized;
@@ -146,6 +155,7 @@ struct GameState
   float total_time;
 
   PlayerController player;
+  Font main_font;
 };
 
 // -- Render Command Structures --
@@ -156,6 +166,7 @@ enum RenderGroupEntryType
   RenderGroupEntryType_UploadTexture,
   RenderGroupEntryType_DrawMesh,
   RenderGroupEntryType_UploadGeometry,
+  RenderGroupEntryType_DrawDynamicMesh,
 };
 
 struct RenderGroupEntryHeader
@@ -222,6 +233,16 @@ struct RenderGroupEntry_DrawMesh
   // issuing the draw.
 };
 
+struct RenderGroupEntry_DrawDynamicMesh
+{
+  Uniforms uniforms;
+  U32 shader_type;
+  U32 vertex_count;
+  // Vertex[vertex_count] immediately follows this struct in the render group.
+  // The renderer bump-allocates them into the current frame arena and fills
+  // uniforms.vertex_offset before issuing the draw.
+};
+
 struct RenderGroup
 {
   U32 size;
@@ -238,6 +259,14 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
                          U32 vertex_count, GpuPtr vertex_offset,
                          const Mat4 *bone_matrices = nullptr);
+void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
+                                MaterialTextures textures, U32 shader_type,
+                                U32 vertex_count, const Vertex *vertices);
+
+Font LoadCookedFont(Arena *arena, const char *path, RenderGroup *render_group,
+                    U32 *next_tex_handle);
+void PushDrawTextCommand(RenderGroup *group, Font *font, Uniforms base_uniforms,
+                         const char *text, Vec3 position, float scale);
 
 // -- Game Output --
 

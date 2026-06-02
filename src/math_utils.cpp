@@ -117,3 +117,25 @@ Mat4 operator*(const Mat4 &a, const Mat4 &b)
   }
   return res;
 }
+
+Mat4 math_make_orthographic(float left, float right, float bottom, float top,
+                            float nearZ, float farZ)
+{
+  Mat4 m = {};
+  float ral = right + left;
+  float rsl = right - left;
+  float tab = top + bottom;
+  float tsb = top - bottom;
+  float fan = farZ + nearZ;
+  float fsn = farZ - nearZ;
+
+  m.columns[0].x = 2.0f / rsl;
+  m.columns[1].y = 2.0f / tsb;
+  m.columns[2].z = 1.0f / fsn; // 1/(far-near) for Metal depth 0..1
+  m.columns[3].x = -ral / rsl;
+  m.columns[3].y = -tab / tsb;
+  m.columns[3].z = -nearZ / fsn; // -near/(far-near) for Metal
+  m.columns[3].w = 1.0f;
+
+  return m;
+}

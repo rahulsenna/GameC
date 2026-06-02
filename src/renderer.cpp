@@ -20,7 +20,9 @@ static CA::MetalLayer *global_metal_layer = nullptr;
 static MTL::CommandQueue *global_command_queue = nullptr;
 static MTL::RenderPipelineState *global_pipeline_state = nullptr;
 static MTL::RenderPipelineState *global_grid_pipeline_state = nullptr;
+static MTL::RenderPipelineState *global_text_pipeline_state = nullptr;
 static MTL::DepthStencilState *global_depth_state = nullptr;
+static MTL::DepthStencilState *global_depth_state_no_write = nullptr;
 static MTL::Texture *global_depth_texture = nullptr;
 
 static std::unordered_map<U32, MTL::Texture *> global_textures;
@@ -45,13 +47,20 @@ static U32 FrameArenaBase()
 
 // Allocate `size` bytes from the current frame arena (16-byte aligned).
 // Returns the byte offset within global_gpu_heap.
-static U32 FrameArenaAlloc(U32 size)
+static U32 FrameArenaAlloc(U32 size, U32 alignment = 16)
 {
-  global_frame_arena_bump = (global_frame_arena_bump + 15u) & ~15u;
-  U32 offset = FrameArenaBase() + global_frame_arena_bump;
+  U32 base = FrameArenaBase();
+  U32 absolute_offset = base + global_frame_arena_bump;
+  U32 remainder = absolute_offset % alignment;
+  if (remainder != 0)
+  {
+    U32 pad = alignment - remainder;
+    global_frame_arena_bump += pad;
+    absolute_offset += pad;
+  }
   global_frame_arena_bump += size;
   // Caller must ensure allocations stay within GPU_FRAME_ARENA_SIZE.
-  return offset;
+  return absolute_offset;
 }
 
 extern "C" void Renderer_LoadShaders()
@@ -129,6 +138,24 @@ extern "C" void Renderer_LoadShaders()
     std::cerr << "Failed to create grid pipeline state\n";
   }
 
+  // Text Pipeline
+  MTL::Function *textFragmentFunction = defaultLibrary->newFunction(
+      NS::String::string("text_fragment_main", NS::UTF8StringEncoding));
+  pipelineStateDescriptor->setLabel(
+      NS::String::string("Text Pipeline", NS::UTF8StringEncoding));
+  pipelineStateDescriptor->setFragmentFunction(textFragmentFunction);
+
+  if (global_text_pipeline_state)
+  {
+    global_text_pipeline_state->release();
+  }
+  global_text_pipeline_state =
+      global_device->newRenderPipelineState(pipelineStateDescriptor, &error);
+  if (!global_text_pipeline_state)
+  {
+    std::cerr << "Failed to create text pipeline state\n";
+  }
+
   if (!global_texture_argument_encoder)
   {
     global_texture_argument_encoder = fragmentFunction->newArgumentEncoder(2);
@@ -139,6 +166,7 @@ extern "C" void Renderer_LoadShaders()
         global_texture_argument_buffer, 0);
   }
 
+  textFragmentFunction->release();
   gridFragmentFunction->release();
   pipelineStateDescriptor->release();
   fragmentFunction->release();
@@ -190,6 +218,9 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
   depthDesc->setDepthCompareFunction(MTL::CompareFunctionLess);
   depthDesc->setDepthWriteEnabled(true);
   global_depth_state = global_device->newDepthStencilState(depthDesc);
+
+  depthDesc->setDepthWriteEnabled(false);
+  global_depth_state_no_write = global_device->newDepthStencilState(depthDesc);
   depthDesc->release();
 
   Renderer_LoadShaders();
@@ -237,6 +268,8 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         pixelFormat = MTL::PixelFormatASTC_4x4_LDR;
       else if (entry->format == 2)
         pixelFormat = MTL::PixelFormatASTC_4x4_LDR;
+      else if (entry->format == 3)
+        pixelFormat = MTL::PixelFormatR8Unorm;
 
       textureDesc->setPixelFormat(pixelFormat);
       textureDesc->setWidth(entry->width);
@@ -272,6 +305,11 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         { // RGBA8
           bytes_per_row = mip_width * 4;
           mip_size = mip_width * mip_height * 4;
+        }
+        else if (entry->format == 3)
+        { // R8Unorm
+          bytes_per_row = mip_width * 1;
+          mip_size = mip_width * mip_height * 1;
         }
         else
         { // ASTC 4x4
@@ -329,6 +367,14 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       offset += sizeof(RenderGroupEntry_DrawMesh);
       if (entry->uniforms.has_bones)
         offset += MAX_BONES * sizeof(Mat4);
+    }
+    else if (header->type == RenderGroupEntryType_DrawDynamicMesh)
+    {
+      RenderGroupEntry_DrawDynamicMesh *entry =
+          (RenderGroupEntry_DrawDynamicMesh *)(output->render_group.base +
+                                               offset);
+      offset += sizeof(RenderGroupEntry_DrawDynamicMesh) +
+                entry->vertex_count * sizeof(Vertex);
     }
   }
 
@@ -406,10 +452,17 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         if (entry->shader_type == 1)
         {
           commandEncoder->setRenderPipelineState(global_grid_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state);
+        }
+        else if (entry->shader_type == 2)
+        {
+          commandEncoder->setRenderPipelineState(global_text_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state_no_write);
         }
         else
         {
           commandEncoder->setRenderPipelineState(global_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state);
         }
         current_shader_type = entry->shader_type;
       }
@@ -437,6 +490,48 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       offset += sizeof(RenderGroupEntry_DrawMesh);
       if (entry->uniforms.has_bones)
         offset += MAX_BONES * sizeof(Mat4);
+    }
+    else if (header->type == RenderGroupEntryType_DrawDynamicMesh)
+    {
+      RenderGroupEntry_DrawDynamicMesh *entry =
+          (RenderGroupEntry_DrawDynamicMesh *)(output->render_group.base +
+                                               offset);
+
+      if (entry->shader_type != current_shader_type)
+      {
+        if (entry->shader_type == 1)
+        {
+          commandEncoder->setRenderPipelineState(global_grid_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state);
+        }
+        else if (entry->shader_type == 2)
+        {
+          commandEncoder->setRenderPipelineState(global_text_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state_no_write);
+        }
+        else
+        {
+          commandEncoder->setRenderPipelineState(global_pipeline_state);
+          commandEncoder->setDepthStencilState(global_depth_state);
+        }
+        current_shader_type = entry->shader_type;
+      }
+
+      Vertex *src_verts = (Vertex *)(entry + 1);
+      U32 vertex_bytes = entry->vertex_count * sizeof(Vertex);
+      U32 v_offset = FrameArenaAlloc(vertex_bytes, sizeof(Vertex));
+      memcpy((U8 *)global_gpu_heap->contents() + v_offset, src_verts,
+             vertex_bytes);
+      entry->uniforms.vertex_offset = v_offset / sizeof(Vertex);
+
+      commandEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
+      commandEncoder->setFragmentBytes(&entry->uniforms, sizeof(Uniforms), 1);
+
+      commandEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
+                                     (NS::UInteger)0,
+                                     (NS::UInteger)entry->vertex_count);
+
+      offset += sizeof(RenderGroupEntry_DrawDynamicMesh) + vertex_bytes;
     }
   }
 

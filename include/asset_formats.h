@@ -14,9 +14,11 @@
 // --- Magic numbers for format validation ---
 #define MESH_MAGIC 0x4853454D // "MESH" in little-endian
 #define TEX_MAGIC 0x00584554  // "TEX\0" in little-endian
+#define FONT_MAGIC 0x544E4F46 // "FONT" in little-endian
 
 #define MESH_VERSION 1
 #define TEX_VERSION 1
+#define FONT_VERSION 1
 
 // --- .tex File Header ---
 // Stores pixel data, optionally compressed, optionally with a full mip chain.
@@ -24,7 +26,8 @@ enum TexFormat : U32
 {
   TexFormat_RGBA8_UNorm = 0,
   TexFormat_ASTC4x4_UNorm = 1,
-  TexFormat_ASTC4x4_sRGB = 2
+  TexFormat_ASTC4x4_sRGB = 2,
+  TexFormat_R8_UNorm = 3
 };
 
 struct CookedTexFileHeader
@@ -101,4 +104,22 @@ struct CookedMeshFileHeader
   U32 _pad[3]; // Padding for alignment / future use
   // Followed by: CookedTexName[num_texture_names]
   // Followed by: CookedSubMeshHeader + data for each submesh
+};
+
+// --- Font ---
+struct CookedGlyph
+{
+  float u0, v0, u1, v1; // UV coordinates in the font atlas
+  float x0, y0, x1, y1; // Pixel bounds (offset from cursor)
+  float advance;        // X advance to the next character
+};
+
+struct CookedFontHeader
+{
+  U32 magic;   // FONT_MAGIC
+  U32 version; // FONT_VERSION
+  U32 num_glyphs;
+  float line_height; // standard line spacing
+  // Followed by: CookedGlyph[num_glyphs]
+  // Followed by: CookedTexFileHeader and raw texture data for the font atlas
 };
