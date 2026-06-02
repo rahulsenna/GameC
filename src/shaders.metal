@@ -19,10 +19,13 @@ struct Uniforms
   float3 light_color;
   float3 camera_pos;
   float ambient_intensity;
-  float4x4 bone_matrices[64];
   uint has_bones;
-
   uint vertex_offset;
+  // Byte offset into the shared GPU heap where bone matrices for this draw
+  // live. The vertex shader reads them directly through the existing heap root
+  // pointer.
+  uint bone_matrix_offset;
+
   uint albedo_tex;
   uint normal_tex;
   uint metallic_tex;
@@ -62,6 +65,12 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
 
   if (uniforms.has_bones > 0)
   {
+    // Bone matrices live in the same GPU heap as vertex data.  Reach them via
+    // the heap root pointer with a simple byte offset — fully bindless.
+    device float4x4 *bone_mats =
+        (device float4x4 *)((device char *)root->vertex_heap +
+                            uniforms.bone_matrix_offset);
+
     local_pos = float4(0.0);
     local_norm = float4(0.0);
     local_tangent = float4(0.0);
@@ -71,7 +80,7 @@ vertex RasterizerData vertex_main(uint vertexID [[vertex_id]],
       if (weight > 0.0)
       {
         uint bone_idx = root->vertex_heap[id].bone_indices[i];
-        float4x4 bone_matrix = uniforms.bone_matrices[bone_idx];
+        float4x4 bone_matrix = bone_mats[bone_idx];
         local_pos +=
             (bone_matrix * float4(root->vertex_heap[id].position, 1.0)) *
             weight;

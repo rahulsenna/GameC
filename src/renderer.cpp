@@ -30,6 +30,30 @@ static MTL::Buffer *global_root_buffer = nullptr;
 static MTL::ArgumentEncoder *global_texture_argument_encoder = nullptr;
 static MTL::Buffer *global_texture_argument_buffer = nullptr;
 
+// Triple-buffered frame arenas — the first GPU_FRAME_ARENA_TOTAL bytes of
+// global_gpu_heap are reserved for these.  Each frame we bump-allocate dynamic
+// data (currently: bone matrices) into the current sub-arena and reset at the
+// end of the frame.  Three arenas ensure the GPU has finished reading the
+// previous frame's data before the CPU overwrites it again.
+static U32 global_frame_index = 0;
+static U32 global_frame_arena_bump = 0; // bytes used in the current frame arena
+
+static U32 FrameArenaBase()
+{
+  return (global_frame_index % GPU_FRAME_ARENA_COUNT) * GPU_FRAME_ARENA_SIZE;
+}
+
+// Allocate `size` bytes from the current frame arena (16-byte aligned).
+// Returns the byte offset within global_gpu_heap.
+static U32 FrameArenaAlloc(U32 size)
+{
+  global_frame_arena_bump = (global_frame_arena_bump + 15u) & ~15u;
+  U32 offset = FrameArenaBase() + global_frame_arena_bump;
+  global_frame_arena_bump += size;
+  // Caller must ensure allocations stay within GPU_FRAME_ARENA_SIZE.
+  return offset;
+}
+
 extern "C" void Renderer_LoadShaders()
 {
   std::string fullPath =
@@ -224,12 +248,12 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
           global_command_queue->commandBuffer();
       MTL::BlitCommandEncoder *blitEncoder =
           blitCommandBuffer->blitCommandEncoder();
-      
+
       if (mipLevels > 1)
       {
         blitEncoder->generateMipmaps(texture);
       }
-      
+
       blitEncoder->endEncoding();
       blitCommandBuffer->commit();
 
@@ -261,7 +285,10 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
     {
       RenderGroupEntry_DrawMesh *entry =
           (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
+      // Skip the fixed struct + optional inline bone data.
       offset += sizeof(RenderGroupEntry_DrawMesh);
+      if (entry->uniforms.has_bones)
+        offset += MAX_BONES * sizeof(Mat4);
     }
   }
 
@@ -348,6 +375,18 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
         current_shader_type = entry->shader_type;
       }
 
+      // Bone matrices are stored inline in the render group right after the
+      // DrawMesh struct.  Bump-allocate a slot in the current frame arena,
+      // copy the data, and patch bone_matrix_offset before binding uniforms.
+      if (entry->uniforms.has_bones)
+      {
+        Mat4 *src_bones = (Mat4 *)(entry + 1);
+        U32 bone_offset = FrameArenaAlloc(MAX_BONES * sizeof(Mat4));
+        memcpy((U8 *)global_gpu_heap->contents() + bone_offset, src_bones,
+               MAX_BONES * sizeof(Mat4));
+        entry->uniforms.bone_matrix_offset = bone_offset;
+      }
+
       commandEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
       commandEncoder->setFragmentBytes(&entry->uniforms, sizeof(Uniforms), 1);
 
@@ -355,11 +394,18 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
                                      (NS::UInteger)0,
                                      (NS::UInteger)entry->vertex_count);
 
+      // Advance past the fixed struct and any trailing inline bone data.
       offset += sizeof(RenderGroupEntry_DrawMesh);
+      if (entry->uniforms.has_bones)
+        offset += MAX_BONES * sizeof(Mat4);
     }
   }
 
   commandEncoder->endEncoding();
   commandBuffer->presentDrawable(drawable);
   commandBuffer->commit();
+
+  // Advance the frame arena: next frame uses the next sub-arena.
+  global_frame_index++;
+  global_frame_arena_bump = 0;
 }

@@ -28,6 +28,14 @@ struct Camera
 
 typedef U64 GpuPtr;
 
+// First GPU_FRAME_ARENA_TOTAL bytes of global_gpu_heap are reserved for
+// triple-buffered per-frame dynamic data (uniforms, bone matrices, etc.).
+// Permanent geometry allocations start after this region.
+#define GPU_FRAME_ARENA_COUNT 3u
+#define GPU_FRAME_ARENA_SIZE (1u * 1024u * 1024u) // 1 MB per frame
+#define GPU_FRAME_ARENA_TOTAL                                                  \
+  (GPU_FRAME_ARENA_COUNT * GPU_FRAME_ARENA_SIZE) // 3 MB total
+
 struct GpuAllocator
 {
   U64 capacity;
@@ -185,9 +193,12 @@ struct Uniforms
   Vec3 light_color;
   Vec3 camera_pos;
   float ambient_intensity;
-  Mat4 bone_matrices[MAX_BONES];
   U32 has_bones;
   U32 vertex_offset;
+  // Byte offset into the shared GPU heap where this draw's bone matrices live.
+  // The vertex shader fetches them directly via the existing heap root pointer,
+  // so no extra buffer binding is required (fully bindless).
+  U32 bone_matrix_offset;
   U32 albedo_tex;
   U32 normal_tex;
   U32 metallic_tex;
@@ -201,6 +212,11 @@ struct RenderGroupEntry_DrawMesh
   U32 shader_type;
   U32 vertex_count;
   GpuPtr vertex_offset;
+  // When uniforms.has_bones != 0, MAX_BONES Mat4 matrices immediately follow
+  // this struct in the render group (mirroring how pixel data follows
+  // RenderGroupEntry_UploadTexture).  The renderer bump-allocates them into
+  // the current frame arena and fills uniforms.bone_matrix_offset before
+  // issuing the draw.
 };
 
 struct RenderGroup
@@ -216,7 +232,8 @@ void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
 void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
-                         U32 vertex_count, GpuPtr vertex_offset);
+                         U32 vertex_count, GpuPtr vertex_offset,
+                         const Mat4 *bone_matrices = nullptr);
 
 // -- Game Output --
 

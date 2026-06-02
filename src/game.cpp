@@ -73,12 +73,42 @@ void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size)
   return dst_data;
 }
 
+void EvaluateBoneMatrices(FBXNode *node, FBXModel *model,
+                          Mat4 *out_bone_matrices,
+                          Vec3 current_root_translation)
+{
+  for (U32 b = 0; b < node->num_bones; b++)
+  {
+    U16 ozz_j = node->ozz_joint_mapping[b];
+    const ozz::math::Float4x4 &ozz_mat = model->model_matrices[ozz_j];
+    const float *m = reinterpret_cast<const float *>(&ozz_mat);
+
+    Mat4 eval_geom = {};
+    eval_geom.columns[0] = {m[0], m[1], m[2], m[3]};
+    eval_geom.columns[1] = {m[4], m[5], m[6], m[7]};
+    eval_geom.columns[2] = {m[8], m[9], m[10], m[11]};
+    eval_geom.columns[3] = {m[12] * 100.f, m[13] * 100.f, m[14] * 100.f, m[15]};
+
+    eval_geom.columns[3].x -= current_root_translation.x * 100.f;
+    eval_geom.columns[3].y -= current_root_translation.y * 100.f;
+    eval_geom.columns[3].z -= current_root_translation.z * 100.f;
+
+    out_bone_matrices[b] = eval_geom * node->inverse_bind_matrices[b];
+  }
+}
+
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
-                         U32 vertex_count, GpuPtr vertex_offset)
+                         U32 vertex_count, GpuPtr vertex_offset,
+                         const Mat4 *bone_matrices)
 {
-  U32 total_size =
-      sizeof(RenderGroupEntryHeader) + sizeof(RenderGroupEntry_DrawMesh);
+  // The DrawMesh entry is followed by MAX_BONES * sizeof(Mat4) of bone matrix
+  // data when has_bones is set.  The renderer will bump-allocate these into
+  // the current frame arena and patch uniforms.bone_matrix_offset before draw.
+  U32 bone_data_size =
+      (bone_matrices && uniforms.has_bones) ? MAX_BONES * sizeof(Mat4) : 0;
+  U32 total_size = sizeof(RenderGroupEntryHeader) +
+                   sizeof(RenderGroupEntry_DrawMesh) + bone_data_size;
   Assert(group->size + total_size <= group->max_size);
 
   RenderGroupEntryHeader *header =
@@ -97,6 +127,13 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
   entry->vertex_offset = vertex_offset;
+
+  if (bone_data_size)
+  {
+    // Copy all MAX_BONES slots so the renderer doesn't read uninitialised
+    // memory when uploading the full block to the frame arena.
+    memcpy((Mat4 *)(entry + 1), bone_matrices, bone_data_size);
+  }
 
   group->size += total_size;
 }
@@ -141,7 +178,10 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
   {
     state->is_initialized = 1;
     state->gpu_allocator.capacity = 512 * 1024 * 1024; // 512 MB
-    state->gpu_allocator.used = 0;
+    // The first GPU_FRAME_ARENA_TOTAL bytes are reserved for triple-buffered
+    // per-frame arenas managed by the renderer.  All permanent geometry
+    // allocations start after that region.
+    state->gpu_allocator.used = GPU_FRAME_ARENA_TOTAL;
     state->time = 0.0f;
     U32 next_tex_handle = 1;
 
@@ -933,38 +973,19 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       if (node->vertex_count > 0)
       {
         uniforms.has_bones = 0;
+        uniforms.bone_matrix_offset = 0;
 
-        if (state->models[10].has_animation)
+        Mat4 bone_mats[MAX_BONES] = {};
+        if (state->models[10].has_animation && node->num_bones > 0)
         {
-          if (node->num_bones > 0)
-          {
-            uniforms.has_bones = 1;
-            for (U32 b = 0; b < node->num_bones; b++)
-            {
-              U16 ozz_j = node->ozz_joint_mapping[b];
-              const ozz::math::Float4x4 &ozz_mat =
-                  state->models[10].model_matrices[ozz_j];
-
-              const float *m = reinterpret_cast<const float *>(&ozz_mat);
-              Mat4 eval_geom = {};
-              eval_geom.columns[0] = {m[0], m[1], m[2], m[3]};
-              eval_geom.columns[1] = {m[4], m[5], m[6], m[7]};
-              eval_geom.columns[2] = {m[8], m[9], m[10], m[11]};
-              eval_geom.columns[3] = {m[12] * 100.f, m[13] * 100.f,
-                                      m[14] * 100.f, m[15]};
-
-              eval_geom.columns[3].x -= current_root_translation.x * 100.f;
-              eval_geom.columns[3].y -= current_root_translation.y * 100.f;
-              eval_geom.columns[3].z -= current_root_translation.z * 100.f;
-
-              uniforms.bone_matrices[b] =
-                  eval_geom * node->inverse_bind_matrices[b];
-            }
-          }
+          uniforms.has_bones = 1;
+          EvaluateBoneMatrices(node, &state->models[10], bone_mats,
+                               current_root_translation);
         }
 
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                            0, node->vertex_count, node->vertex_offset);
+                            0, node->vertex_count, node->vertex_offset,
+                            uniforms.has_bones ? bone_mats : nullptr);
       }
     }
   }
