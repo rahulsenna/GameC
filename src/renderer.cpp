@@ -224,7 +224,12 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
           global_command_queue->commandBuffer();
       MTL::BlitCommandEncoder *blitEncoder =
           blitCommandBuffer->blitCommandEncoder();
-      blitEncoder->generateMipmaps(texture);
+      
+      if (mipLevels > 1)
+      {
+        blitEncoder->generateMipmaps(texture);
+      }
+      
       blitEncoder->endEncoding();
       blitCommandBuffer->commit();
 
