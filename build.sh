@@ -38,7 +38,7 @@ build_engine() {
         -std=c++17 -fno-exceptions -fno-rtti \
         -I include/ \
         -framework Cocoa -framework Metal -framework QuartzCore \
-        src/osx_main.mm src/renderer.cpp include/base_arena.cpp \
+        src/osx_main.mm src/renderer.cpp src/math_utils.cpp include/base_arena.cpp \
         -o build/engine
 }
 

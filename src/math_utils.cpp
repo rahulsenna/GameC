@@ -139,3 +139,82 @@ Mat4 math_make_orthographic(float left, float right, float bottom, float top,
 
   return m;
 }
+
+Vec4 operator*(const Mat4 &m, const Vec4 &v)
+{
+  return {m.columns[0].x * v.x + m.columns[1].x * v.y + m.columns[2].x * v.z +
+              m.columns[3].x * v.w,
+          m.columns[0].y * v.x + m.columns[1].y * v.y + m.columns[2].y * v.z +
+              m.columns[3].y * v.w,
+          m.columns[0].z * v.x + m.columns[1].z * v.y + m.columns[2].z * v.z +
+              m.columns[3].z * v.w,
+          m.columns[0].w * v.x + m.columns[1].w * v.y + m.columns[2].w * v.z +
+              m.columns[3].w * v.w};
+}
+
+void math_extract_frustum_planes(const Mat4 &vp, Vec4 planes[6])
+{
+  // Left
+  planes[0].x = vp.columns[0].w + vp.columns[0].x;
+  planes[0].y = vp.columns[1].w + vp.columns[1].x;
+  planes[0].z = vp.columns[2].w + vp.columns[2].x;
+  planes[0].w = vp.columns[3].w + vp.columns[3].x;
+
+  // Right
+  planes[1].x = vp.columns[0].w - vp.columns[0].x;
+  planes[1].y = vp.columns[1].w - vp.columns[1].x;
+  planes[1].z = vp.columns[2].w - vp.columns[2].x;
+  planes[1].w = vp.columns[3].w - vp.columns[3].x;
+
+  // Bottom
+  planes[2].x = vp.columns[0].w + vp.columns[0].y;
+  planes[2].y = vp.columns[1].w + vp.columns[1].y;
+  planes[2].z = vp.columns[2].w + vp.columns[2].y;
+  planes[2].w = vp.columns[3].w + vp.columns[3].y;
+
+  // Top
+  planes[3].x = vp.columns[0].w - vp.columns[0].y;
+  planes[3].y = vp.columns[1].w - vp.columns[1].y;
+  planes[3].z = vp.columns[2].w - vp.columns[2].y;
+  planes[3].w = vp.columns[3].w - vp.columns[3].y;
+
+  // Near (Metal: 0 <= z <= w)
+  planes[4].x = vp.columns[0].z;
+  planes[4].y = vp.columns[1].z;
+  planes[4].z = vp.columns[2].z;
+  planes[4].w = vp.columns[3].z;
+
+  // Far
+  planes[5].x = vp.columns[0].w - vp.columns[0].z;
+  planes[5].y = vp.columns[1].w - vp.columns[1].z;
+  planes[5].z = vp.columns[2].w - vp.columns[2].z;
+  planes[5].w = vp.columns[3].w - vp.columns[3].z;
+
+  // Normalize planes
+  for (int i = 0; i < 6; ++i)
+  {
+    float length = sqrtf(planes[i].x * planes[i].x + planes[i].y * planes[i].y +
+                         planes[i].z * planes[i].z);
+    if (length > 0.00001f)
+    {
+      planes[i].x /= length;
+      planes[i].y /= length;
+      planes[i].z /= length;
+      planes[i].w /= length;
+    }
+  }
+}
+
+bool math_test_sphere_frustum(Vec3 center, float radius, const Vec4 planes[6])
+{
+  for (int i = 0; i < 6; ++i)
+  {
+    float distance = planes[i].x * center.x + planes[i].y * center.y +
+                     planes[i].z * center.z + planes[i].w;
+    if (distance < -radius)
+    {
+      return false; // outside
+    }
+  }
+  return true; // inside or intersecting
+}

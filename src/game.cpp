@@ -103,6 +103,7 @@ void EvaluateBoneMatrices(FBXNode *node, FBXModel *model,
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
                          U32 vertex_count, GpuPtr vertex_offset,
+                         Vec3 bounds_center, F32 bounds_radius,
                          const Mat4 *bone_matrices)
 {
   // The DrawMesh entry is followed by MAX_BONES * sizeof(Mat4) of bone matrix
@@ -130,6 +131,27 @@ void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
   entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
   entry->vertex_offset = vertex_offset;
+  entry->vertex_count = vertex_count;
+  entry->vertex_offset = vertex_offset;
+
+  Vec4 center4 = {bounds_center.x, bounds_center.y, bounds_center.z, 1.0f};
+  center4 = uniforms.model_matrix * center4;
+  entry->bounds_center = {center4.x, center4.y, center4.z};
+
+  float sx2 =
+      uniforms.model_matrix.columns[0].x * uniforms.model_matrix.columns[0].x +
+      uniforms.model_matrix.columns[0].y * uniforms.model_matrix.columns[0].y +
+      uniforms.model_matrix.columns[0].z * uniforms.model_matrix.columns[0].z;
+  float sy2 =
+      uniforms.model_matrix.columns[1].x * uniforms.model_matrix.columns[1].x +
+      uniforms.model_matrix.columns[1].y * uniforms.model_matrix.columns[1].y +
+      uniforms.model_matrix.columns[1].z * uniforms.model_matrix.columns[1].z;
+  float sz2 =
+      uniforms.model_matrix.columns[2].x * uniforms.model_matrix.columns[2].x +
+      uniforms.model_matrix.columns[2].y * uniforms.model_matrix.columns[2].y +
+      uniforms.model_matrix.columns[2].z * uniforms.model_matrix.columns[2].z;
+  float max_scale = sqrtf(fmaxf(sx2, fmaxf(sy2, sz2)));
+  entry->bounds_radius = bounds_radius * max_scale;
 
   if (bone_data_size)
   {
@@ -151,7 +173,8 @@ U32 LoadTexture(const char *path, RenderGroup *render_group,
 
 void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
                                 MaterialTextures textures, U32 shader_type,
-                                U32 vertex_count, const Vertex *vertices)
+                                U32 vertex_count, const Vertex *vertices,
+                                Vec3 bounds_center, F32 bounds_radius)
 {
   U32 total_size = sizeof(RenderGroupEntryHeader) +
                    sizeof(RenderGroupEntry_DrawDynamicMesh) +
@@ -172,6 +195,26 @@ void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
   entry->uniforms.ao_tex = textures.ao;
   entry->shader_type = shader_type;
   entry->vertex_count = vertex_count;
+  entry->vertex_count = vertex_count;
+
+  Vec4 center4 = {bounds_center.x, bounds_center.y, bounds_center.z, 1.0f};
+  center4 = uniforms.model_matrix * center4;
+  entry->bounds_center = {center4.x, center4.y, center4.z};
+
+  float sx2 =
+      uniforms.model_matrix.columns[0].x * uniforms.model_matrix.columns[0].x +
+      uniforms.model_matrix.columns[0].y * uniforms.model_matrix.columns[0].y +
+      uniforms.model_matrix.columns[0].z * uniforms.model_matrix.columns[0].z;
+  float sy2 =
+      uniforms.model_matrix.columns[1].x * uniforms.model_matrix.columns[1].x +
+      uniforms.model_matrix.columns[1].y * uniforms.model_matrix.columns[1].y +
+      uniforms.model_matrix.columns[1].z * uniforms.model_matrix.columns[1].z;
+  float sz2 =
+      uniforms.model_matrix.columns[2].x * uniforms.model_matrix.columns[2].x +
+      uniforms.model_matrix.columns[2].y * uniforms.model_matrix.columns[2].y +
+      uniforms.model_matrix.columns[2].z * uniforms.model_matrix.columns[2].z;
+  float max_scale = sqrtf(fmaxf(sx2, fmaxf(sy2, sz2)));
+  entry->bounds_radius = bounds_radius * max_scale;
 
   Vertex *dst_verts = (Vertex *)(entry + 1);
   memcpy(dst_verts, vertices, vertex_count * sizeof(Vertex));
@@ -289,7 +332,8 @@ void PushDrawTextCommand(RenderGroup *group, Font *font, Uniforms base_uniforms,
   {
     MaterialTextures tex = {};
     tex.albedo = font->texture_handle;
-    PushDrawDynamicMeshCommand(group, base_uniforms, tex, 2, v_count, verts);
+    PushDrawDynamicMeshCommand(group, base_uniforms, tex, 2, v_count, verts,
+                               Vec3{0, 0, 0}, 1e6f);
   }
 }
 
@@ -721,15 +765,91 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
   Uniforms base_uniforms = {};
   base_uniforms.light_dir = math_normalize(Vec3{1.0f, 1.0f, 1.0f});
   base_uniforms.light_color = Vec3{1.0f, 1.0f, 1.0f};
+  base_uniforms.light_color = Vec3{1.0f, 1.0f, 1.0f};
   base_uniforms.camera_pos = state->camera.position;
+  base_uniforms.camera_front = front;
   base_uniforms.ambient_intensity = 0.2f;
 
-  Vec3 light_target = state->player.position;
-  Vec3 light_pos = light_target + base_uniforms.light_dir * 30.0f;
-  Mat4 light_view = math_make_look_at(light_pos, light_target, Vec3{0, 1, 0});
-  Mat4 light_proj =
-      math_make_orthographic(-20.0f, 20.0f, -20.0f, 20.0f, 0.1f, 100.0f);
-  base_uniforms.light_vp_matrix = light_proj * light_view;
+  float cascade_ends[4] = {0.1f, 15.0f, 45.0f, 120.0f};
+  base_uniforms.cascade_splits = {cascade_ends[1], cascade_ends[2],
+                                  cascade_ends[3], 0.0f};
+
+  for (int c = 0; c < 3; ++c)
+  {
+    float n = cascade_ends[c];
+    float f = cascade_ends[c + 1];
+
+    float h_near = tanf(fov * 0.5f) * n;
+    float w_near = h_near * aspect;
+    float h_far = tanf(fov * 0.5f) * f;
+    float w_far = h_far * aspect;
+
+    Vec3 right = math_normalize(math_cross(front, up));
+    Vec3 cam_up = math_cross(right, front);
+
+    Vec3 center_near = state->camera.position + front * n;
+    Vec3 center_far = state->camera.position + front * f;
+
+    Vec3 corners[8] = {center_near + (cam_up * h_near) - (right * w_near),
+                       center_near + (cam_up * h_near) + (right * w_near),
+                       center_near - (cam_up * h_near) - (right * w_near),
+                       center_near - (cam_up * h_near) + (right * w_near),
+                       center_far + (cam_up * h_far) - (right * w_far),
+                       center_far + (cam_up * h_far) + (right * w_far),
+                       center_far - (cam_up * h_far) - (right * w_far),
+                       center_far - (cam_up * h_far) + (right * w_far)};
+
+    Vec3 frustum_center = {0, 0, 0};
+    for (int i = 0; i < 8; i++)
+      frustum_center += corners[i];
+    frustum_center = frustum_center / 8.0f;
+
+    float max_dist_sq = 0;
+    for (int i = 0; i < 8; i++)
+    {
+      float dx = corners[i].x - frustum_center.x;
+      float dy = corners[i].y - frustum_center.y;
+      float dz = corners[i].z - frustum_center.z;
+      float d_sq = dx * dx + dy * dy + dz * dz;
+      if (d_sq > max_dist_sq)
+        max_dist_sq = d_sq;
+    }
+    float radius = sqrtf(max_dist_sq);
+
+    Vec3 light_pos = frustum_center + base_uniforms.light_dir * radius;
+    Mat4 light_view =
+        math_make_look_at(light_pos, frustum_center, Vec3{0, 1, 0});
+
+    // Texel snapping to fix shimmering
+    float shadow_map_res = 4096.0f;
+    float texel_size = (radius * 2.0f) / shadow_map_res;
+
+    Vec4 center_ls = light_view * Vec4{frustum_center.x, frustum_center.y,
+                                       frustum_center.z, 1.0f};
+
+    float snapped_x = floorf(center_ls.x / texel_size) * texel_size;
+    float snapped_y = floorf(center_ls.y / texel_size) * texel_size;
+
+    float dx = snapped_x - center_ls.x;
+    float dy = snapped_y - center_ls.y;
+
+    Vec3 light_right = {light_view.columns[0].x, light_view.columns[1].x,
+                        light_view.columns[2].x};
+    Vec3 light_up = {light_view.columns[0].y, light_view.columns[1].y,
+                     light_view.columns[2].y};
+
+    // Shift camera and target to matched snapped grid
+    light_pos = light_pos - (light_right * dx) - (light_up * dy);
+    frustum_center = frustum_center - (light_right * dx) - (light_up * dy);
+
+    // Rebuild view
+    light_view = math_make_look_at(light_pos, frustum_center, Vec3{0, 1, 0});
+
+    Mat4 light_proj = math_make_orthographic(-radius, radius, -radius, radius,
+                                             -radius * 5.0f, radius * 2.0f);
+
+    base_uniforms.light_vp_matrices[c] = light_proj * light_view;
+  }
 
   // 1. Draw Infinite Plane
   {
@@ -749,7 +869,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       FBXNode *node = &state->models[9].nodes[n];
       // Draw solid PBR floor
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                          0, node->vertex_count, node->vertex_offset);
+                          0, node->vertex_count, node->vertex_offset,
+                          node->bounds_center, node->bounds_radius);
     }
   }
 
@@ -770,7 +891,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       FBXNode *node = &state->models[9].nodes[n];
       // Draw grid lines
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                          1, node->vertex_count, node->vertex_offset);
+                          1, node->vertex_count, node->vertex_offset,
+                          node->bounds_center, node->bounds_radius);
     }
   }
 
@@ -812,7 +934,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     {
       FBXNode *node = &state->models[i].nodes[n];
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                          0, node->vertex_count, node->vertex_offset);
+                          0, node->vertex_count, node->vertex_offset,
+                          node->bounds_center, node->bounds_radius);
     }
   }
 
@@ -1173,6 +1296,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
 
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
                             0, node->vertex_count, node->vertex_offset,
+                            node->bounds_center, node->bounds_radius,
                             uniforms.has_bones ? bone_mats : nullptr);
       }
     }
@@ -1200,7 +1324,8 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       if (node->vertex_count > 0)
       {
         PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
-                            0, node->vertex_count, node->vertex_offset);
+                            0, node->vertex_count, node->vertex_offset,
+                            node->bounds_center, node->bounds_radius);
       }
     }
   }

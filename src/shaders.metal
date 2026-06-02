@@ -15,11 +15,15 @@ struct Uniforms
 {
   float4x4 mvp_matrix;
   float4x4 model_matrix;
-  float4x4 light_vp_matrix;
+  float4x4 light_vp_matrices[4];
+  float4 cascade_splits;
   float3 light_dir;
   float3 light_color;
   float3 camera_pos;
   float ambient_intensity;
+  float3 camera_front;
+  float padding_front;
+  uint cascade_index;
   uint has_bones;
   uint vertex_offset;
   // Byte offset into the shared GPU heap where bone matrices for this draw
@@ -146,7 +150,8 @@ vertex RasterizerDataShadow shadow_vertex_main(uint vertexID [[vertex_id]],
     local_pos.w = 1.0;
   }
 
-  out.position = uniforms.light_vp_matrix * uniforms.model_matrix * local_pos;
+  out.position = uniforms.light_vp_matrices[uniforms.cascade_index] *
+                 uniforms.model_matrix * local_pos;
   return out;
 }
 
@@ -196,7 +201,7 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
                               constant RootData *root [[buffer(0)]],
                               constant Uniforms &uniforms [[buffer(1)]],
                               constant TextureHeap &texture_heap [[buffer(2)]],
-                              depth2d<float> shadow_map [[texture(0)]])
+                              depth2d_array<float> shadow_map [[texture(0)]])
 {
   constexpr sampler textureSampler(mag_filter::linear, min_filter::linear,
                                    mip_filter::linear, s_address::repeat,
@@ -279,8 +284,16 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
   F0 = mix(F0, albedo, metallic);
 
   // Shadow mapping calculation
+  float view_z =
+      dot(in.world_position - uniforms.camera_pos, uniforms.camera_front);
+  uint cascade_idx = 0;
+  if (view_z > uniforms.cascade_splits.x)
+    cascade_idx = 1;
+  if (view_z > uniforms.cascade_splits.y)
+    cascade_idx = 2;
+
   float4 frag_pos_light_space =
-      uniforms.light_vp_matrix * float4(in.world_position, 1.0);
+      uniforms.light_vp_matrices[cascade_idx] * float4(in.world_position, 1.0);
   float3 proj_coords = frag_pos_light_space.xyz / frag_pos_light_space.w;
   // Convert from [-1, 1] to [0, 1] for texture coordinates (Metal depth is 0 to
   // 1, but X,Y are -1 to 1)
@@ -299,16 +312,32 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
     float current_depth = proj_coords.z;
     float bias = max(0.005 * (1.0 - dot(N, L)), 0.0005);
 
-    for (int x = -1; x <= 1; ++x)
+    // Early bail-out for PCF (skip edges if center is fully lit or fully
+    // shadowed)
+    float center_shadow = shadow_map.sample_compare(
+        shadowSampler, proj_coords.xy, cascade_idx, current_depth - bias);
+
+    if (center_shadow > 0.999 || center_shadow < 0.001)
     {
-      for (int y = -1; y <= 1; ++y)
-      {
-        float2 offset = float2(x, y) / float2(4096.0, 4096.0);
-        shadow += shadow_map.sample_compare(
-            shadowSampler, proj_coords.xy + offset, current_depth - bias);
-      }
+      shadow = center_shadow;
     }
-    shadow /= 9.0;
+    else
+    {
+      shadow += center_shadow;
+      for (int x = -1; x <= 1; ++x)
+      {
+        for (int y = -1; y <= 1; ++y)
+        {
+          if (x == 0 && y == 0)
+            continue; // Already sampled center
+          float2 offset = float2(x, y) / float2(4096.0, 4096.0);
+          shadow +=
+              shadow_map.sample_compare(shadowSampler, proj_coords.xy + offset,
+                                        cascade_idx, current_depth - bias);
+        }
+      }
+      shadow /= 9.0;
+    }
   }
   else
   {

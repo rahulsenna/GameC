@@ -6,12 +6,50 @@ struct MeshData
   Vertex *vertices;
 };
 
+static void CalculateNodeBounds(FBXNode &node)
+{
+  Vec3 min_bounds = {1e30f, 1e30f, 1e30f};
+  Vec3 max_bounds = {-1e30f, -1e30f, -1e30f};
+  for (U32 i = 0; i < node.vertex_count; ++i)
+  {
+    Vec3 p = node.vertices[i].position;
+    if (p.x < min_bounds.x)
+      min_bounds.x = p.x;
+    if (p.y < min_bounds.y)
+      min_bounds.y = p.y;
+    if (p.z < min_bounds.z)
+      min_bounds.z = p.z;
+    if (p.x > max_bounds.x)
+      max_bounds.x = p.x;
+    if (p.y > max_bounds.y)
+      max_bounds.y = p.y;
+    if (p.z > max_bounds.z)
+      max_bounds.z = p.z;
+  }
+  node.bounds_center = {(min_bounds.x + max_bounds.x) * 0.5f,
+                        (min_bounds.y + max_bounds.y) * 0.5f,
+                        (min_bounds.z + max_bounds.z) * 0.5f};
+  float max_dist_sq = 0.0f;
+  for (U32 i = 0; i < node.vertex_count; ++i)
+  {
+    Vec3 p = node.vertices[i].position;
+    float dx = p.x - node.bounds_center.x;
+    float dy = p.y - node.bounds_center.y;
+    float dz = p.z - node.bounds_center.z;
+    float dist_sq = dx * dx + dy * dy + dz * dz;
+    if (dist_sq > max_dist_sq)
+      max_dist_sq = dist_sq;
+  }
+  node.bounds_radius = sqrtf(max_dist_sq);
+}
+
 static FBXModel ToFBXModel(MeshData mesh)
 {
   FBXModel model = {};
   model.num_nodes = 1;
   model.nodes[0].vertex_count = mesh.vertex_count;
   model.nodes[0].vertices = mesh.vertices;
+  CalculateNodeBounds(model.nodes[0]);
   return model;
 }
 #define STB_IMAGE_IMPLEMENTATION
@@ -1015,6 +1053,7 @@ FBXModel LoadCookedMesh(Arena *arena, const char *mesh_path,
       }
     }
 
+    CalculateNodeBounds(node);
     model.nodes[model.num_nodes++] = node;
   }
 

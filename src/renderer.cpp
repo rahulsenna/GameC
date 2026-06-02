@@ -254,6 +254,8 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
   MTL::TextureDescriptor *shadowDesc =
       MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatDepth32Float,
                                                   4096, 4096, false);
+  shadowDesc->setTextureType(MTL::TextureType2DArray);
+  shadowDesc->setArrayLength(3);
   shadowDesc->setUsage(MTL::TextureUsageRenderTarget |
                        MTL::TextureUsageShaderRead);
   shadowDesc->setStorageMode(MTL::StorageModePrivate);
@@ -478,85 +480,98 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
   MTL::CommandBuffer *commandBuffer = global_command_queue->commandBuffer();
 
   // Loop 3: Shadow Pass
-  MTL::RenderPassDescriptor *shadowPassDescriptor =
-      MTL::RenderPassDescriptor::renderPassDescriptor();
-  shadowPassDescriptor->depthAttachment()->setTexture(global_shadow_texture);
-  shadowPassDescriptor->depthAttachment()->setLoadAction(MTL::LoadActionClear);
-  shadowPassDescriptor->depthAttachment()->setClearDepth(1.0);
-  shadowPassDescriptor->depthAttachment()->setStoreAction(
-      MTL::StoreActionStore);
-
-  MTL::RenderCommandEncoder *shadowEncoder =
-      commandBuffer->renderCommandEncoder(shadowPassDescriptor);
-  shadowEncoder->setDepthStencilState(global_depth_state);
-  shadowEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
-  shadowEncoder->setCullMode(MTL::CullModeBack);
-  shadowEncoder->useResource(global_gpu_heap, MTL::ResourceUsageRead,
-                             MTL::RenderStageVertex);
-  shadowEncoder->setRenderPipelineState(global_shadow_pipeline_state);
-  shadowEncoder->setVertexBuffer(global_root_buffer, 0, 0);
-
-  offset = 0;
-  while (offset < output->render_group.size)
+  for (int cascade = 0; cascade < 3; ++cascade)
   {
-    RenderGroupEntryHeader *header =
-        (RenderGroupEntryHeader *)(output->render_group.base + offset);
-    offset += sizeof(RenderGroupEntryHeader);
+    MTL::RenderPassDescriptor *shadowPassDescriptor =
+        MTL::RenderPassDescriptor::renderPassDescriptor();
+    shadowPassDescriptor->depthAttachment()->setTexture(global_shadow_texture);
+    shadowPassDescriptor->depthAttachment()->setSlice(cascade);
+    shadowPassDescriptor->depthAttachment()->setLoadAction(
+        MTL::LoadActionClear);
+    shadowPassDescriptor->depthAttachment()->setClearDepth(1.0);
+    shadowPassDescriptor->depthAttachment()->setStoreAction(
+        MTL::StoreActionStore);
 
-    if (header->type == RenderGroupEntryType_Clear)
-    {
-      offset += sizeof(RenderGroupEntry_Clear);
-    }
-    else if (header->type == RenderGroupEntryType_UploadTexture)
-    {
-      RenderGroupEntry_UploadTexture *entry =
-          (RenderGroupEntry_UploadTexture *)(output->render_group.base +
-                                             offset);
-      offset += sizeof(RenderGroupEntry_UploadTexture) + entry->data_size;
-    }
-    else if (header->type == RenderGroupEntryType_UploadGeometry)
-    {
-      RenderGroupEntry_UploadGeometry *entry =
-          (RenderGroupEntry_UploadGeometry *)(output->render_group.base +
-                                              offset);
-      offset += sizeof(RenderGroupEntry_UploadGeometry) + entry->size;
-    }
-    else if (header->type == RenderGroupEntryType_DrawMesh)
-    {
-      RenderGroupEntry_DrawMesh *entry =
-          (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
+    MTL::RenderCommandEncoder *shadowEncoder =
+        commandBuffer->renderCommandEncoder(shadowPassDescriptor);
+    shadowEncoder->setDepthStencilState(global_depth_state);
+    shadowEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
+    shadowEncoder->setCullMode(MTL::CullModeBack);
+    shadowEncoder->useResource(global_gpu_heap, MTL::ResourceUsageRead,
+                               MTL::RenderStageVertex);
+    shadowEncoder->setRenderPipelineState(global_shadow_pipeline_state);
+    shadowEncoder->setVertexBuffer(global_root_buffer, 0, 0);
 
-      if (entry->shader_type == 0 || entry->shader_type == 1) // Opaque meshes
+    Vec4 planes[6];
+    bool planes_extracted = false;
+
+    offset = 0;
+    while (offset < output->render_group.size)
+    {
+      RenderGroupEntryHeader *header =
+          (RenderGroupEntryHeader *)(output->render_group.base + offset);
+      offset += sizeof(RenderGroupEntryHeader);
+
+      if (header->type == RenderGroupEntryType_Clear)
       {
-        shadowEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
-        shadowEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
-                                      (NS::UInteger)0,
-                                      (NS::UInteger)entry->vertex_count);
+        offset += sizeof(RenderGroupEntry_Clear);
       }
-
-      offset += sizeof(RenderGroupEntry_DrawMesh);
-      if (entry->uniforms.has_bones)
-        offset += MAX_BONES * sizeof(Mat4);
-    }
-    else if (header->type == RenderGroupEntryType_DrawDynamicMesh)
-    {
-      RenderGroupEntry_DrawDynamicMesh *entry =
-          (RenderGroupEntry_DrawDynamicMesh *)(output->render_group.base +
+      else if (header->type == RenderGroupEntryType_UploadTexture)
+      {
+        RenderGroupEntry_UploadTexture *entry =
+            (RenderGroupEntry_UploadTexture *)(output->render_group.base +
                                                offset);
-
-      if (entry->shader_type == 0 || entry->shader_type == 1)
-      {
-        shadowEncoder->setVertexBytes(&entry->uniforms, sizeof(Uniforms), 1);
-        shadowEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
-                                      (NS::UInteger)0,
-                                      (NS::UInteger)entry->vertex_count);
+        offset += sizeof(RenderGroupEntry_UploadTexture) + entry->data_size;
       }
+      else if (header->type == RenderGroupEntryType_UploadGeometry)
+      {
+        RenderGroupEntry_UploadGeometry *entry =
+            (RenderGroupEntry_UploadGeometry *)(output->render_group.base +
+                                                offset);
+        offset += sizeof(RenderGroupEntry_UploadGeometry) + entry->size;
+      }
+      else if (header->type == RenderGroupEntryType_DrawMesh)
+      {
+        RenderGroupEntry_DrawMesh *entry =
+            (RenderGroupEntry_DrawMesh *)(output->render_group.base + offset);
 
-      offset += sizeof(RenderGroupEntry_DrawDynamicMesh) +
-                entry->vertex_count * sizeof(Vertex);
+        if (!planes_extracted)
+        {
+          math_extract_frustum_planes(
+              entry->uniforms.light_vp_matrices[cascade], planes);
+          planes_extracted = true;
+        }
+
+        if (entry->shader_type == 0 || entry->shader_type == 1) // Opaque meshes
+        {
+          if (entry->uniforms.has_bones ||
+              math_test_sphere_frustum(entry->bounds_center,
+                                       entry->bounds_radius, planes))
+          {
+            Uniforms pass_uniforms = entry->uniforms;
+            pass_uniforms.cascade_index = cascade;
+            shadowEncoder->setVertexBytes(&pass_uniforms, sizeof(Uniforms), 1);
+            shadowEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
+                                          (NS::UInteger)0,
+                                          (NS::UInteger)entry->vertex_count);
+          }
+        }
+
+        offset += sizeof(RenderGroupEntry_DrawMesh);
+        if (entry->uniforms.has_bones)
+          offset += MAX_BONES * sizeof(Mat4);
+      }
+      else if (header->type == RenderGroupEntryType_DrawDynamicMesh)
+      {
+        RenderGroupEntry_DrawDynamicMesh *entry =
+            (RenderGroupEntry_DrawDynamicMesh *)(output->render_group.base +
+                                                 offset);
+        offset += sizeof(RenderGroupEntry_DrawDynamicMesh) +
+                  entry->vertex_count * sizeof(Vertex);
+      }
     }
+    shadowEncoder->endEncoding();
   }
-  shadowEncoder->endEncoding();
 
   // Loop 4: Main Pass
   MTL::RenderPassDescriptor *passDescriptor =

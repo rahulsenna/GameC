@@ -81,4 +81,8 @@ Mat4 math_make_orthographic(float left, float right, float bottom, float top,
                             float nearZ, float farZ);
 Mat4 math_make_look_at(Vec3 eye, Vec3 target, Vec3 up);
 
+void math_extract_frustum_planes(const Mat4 &vp, Vec4 planes[6]);
+bool math_test_sphere_frustum(Vec3 center, float radius, const Vec4 planes[6]);
+
 Mat4 operator*(const Mat4 &a, const Mat4 &b);
+Vec4 operator*(const Mat4 &m, const Vec4 &v);

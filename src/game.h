@@ -85,6 +85,8 @@ struct FBXNode
   U16 *ozz_joint_mapping; // maps from local bone index to ozz skeleton joint
                           // index
   Mat4 *inverse_bind_matrices;
+  Vec3 bounds_center;
+  F32 bounds_radius;
 };
 
 struct FBXModel
@@ -203,11 +205,15 @@ struct Uniforms
 {
   Mat4 mvp_matrix;
   Mat4 model_matrix;
-  Mat4 light_vp_matrix;
+  Mat4 light_vp_matrices[4];
+  Vec4 cascade_splits;
   Vec3 light_dir;
   Vec3 light_color;
   Vec3 camera_pos;
   float ambient_intensity;
+  Vec3 camera_front;
+  float padding_front;
+  U32 cascade_index;
   U32 has_bones;
   U32 vertex_offset;
   // Byte offset into the shared GPU heap where this draw's bone matrices live.
@@ -227,6 +233,8 @@ struct RenderGroupEntry_DrawMesh
   U32 shader_type;
   U32 vertex_count;
   GpuPtr vertex_offset;
+  Vec3 bounds_center;
+  F32 bounds_radius;
   // When uniforms.has_bones != 0, MAX_BONES Mat4 matrices immediately follow
   // this struct in the render group (mirroring how pixel data follows
   // RenderGroupEntry_UploadTexture).  The renderer bump-allocates them into
@@ -239,6 +247,8 @@ struct RenderGroupEntry_DrawDynamicMesh
   Uniforms uniforms;
   U32 shader_type;
   U32 vertex_count;
+  Vec3 bounds_center;
+  F32 bounds_radius;
   // Vertex[vertex_count] immediately follows this struct in the render group.
   // The renderer bump-allocates them into the current frame arena and fills
   // uniforms.vertex_offset before issuing the draw.
@@ -259,10 +269,12 @@ void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,
                          U32 vertex_count, GpuPtr vertex_offset,
+                         Vec3 bounds_center, F32 bounds_radius,
                          const Mat4 *bone_matrices = nullptr);
 void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
                                 MaterialTextures textures, U32 shader_type,
-                                U32 vertex_count, const Vertex *vertices);
+                                U32 vertex_count, const Vertex *vertices,
+                                Vec3 bounds_center, F32 bounds_radius);
 
 Font LoadCookedFont(Arena *arena, const char *path, RenderGroup *render_group,
                     U32 *next_tex_handle);
