@@ -52,7 +52,7 @@ inline GpuPtr gpuMalloc(GpuAllocator *allocator, U64 size)
   return offset;
 }
 
-#define MAX_BONES 64
+#define MAX_BONES 128
 
 struct Vertex
 {

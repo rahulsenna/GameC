@@ -24,7 +24,7 @@
 #include <unordered_map>
 #include <vector>
 
-#define MAX_BONES 64
+#define MAX_BONES 128
 
 namespace fs = std::filesystem;
 
