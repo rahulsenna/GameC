@@ -365,6 +365,14 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     default_textures.roughness = default_roughness;
     default_textures.ao = default_ao;
 
+    U32 green_albedo = next_tex_handle++;
+    void *green_albedo_dst = PushUploadTextureCommand(
+        &out_output->render_group, green_albedo, 1, 1, 0, 1, 4);
+    *(U32 *)green_albedo_dst = 0xFF267326; // ABGR -> A=FF, B=26, G=73, R=26
+
+    MaterialTextures green_textures = default_textures;
+    green_textures.albedo = green_albedo;
+
     state->camera.position = Vec3{0.0f, 2.0f, 5.0f};
     state->camera.yaw = -90.0f; // Look down -Z
     state->camera.pitch = 0.0f;
@@ -447,7 +455,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     state->models[8].nodes[0].textures = default_textures_local;
 
     state->models[9] = CreatePlane(arena, 1000.0f);
-    state->models[9].nodes[0].textures = default_textures_local;
+    state->models[9].nodes[0].textures = green_textures;
 
     state->models[10] = LoadCookedMesh(
         arena, "assets_cooked/Sophie.mesh", &out_output->render_group,
@@ -723,7 +731,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
       math_make_orthographic(-20.0f, 20.0f, -20.0f, 20.0f, 0.1f, 100.0f);
   base_uniforms.light_vp_matrix = light_proj * light_view;
 
-  // 1. Draw Infinite Grid Plane
+  // 1. Draw Infinite Plane
   {
     Mat4 model_matrix = Mat4{
         Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
@@ -739,6 +747,28 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     for (U32 n = 0; n < state->models[9].num_nodes; n++)
     {
       FBXNode *node = &state->models[9].nodes[n];
+      // Draw solid PBR floor
+      PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
+                          0, node->vertex_count, node->vertex_offset);
+    }
+  }
+
+  // 1.5 Draw Infinite Grid Lines on top of floor
+  {
+    Mat4 model_matrix = Mat4{
+        Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0}, Vec4{0, 0, 1, 0},
+        Vec4{0, -0.49f, 0, 1} // Slightly above the floor to avoid z-fighting
+    };
+    Mat4 mvp_matrix = vp_matrix * model_matrix;
+
+    Uniforms uniforms = base_uniforms;
+    uniforms.mvp_matrix = mvp_matrix;
+    uniforms.model_matrix = model_matrix;
+
+    for (U32 n = 0; n < state->models[9].num_nodes; n++)
+    {
+      FBXNode *node = &state->models[9].nodes[n];
+      // Draw grid lines
       PushDrawMeshCommand(&out_output->render_group, uniforms, node->textures,
                           1, node->vertex_count, node->vertex_offset);
     }
