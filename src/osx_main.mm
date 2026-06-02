@@ -95,6 +95,7 @@ static time_t global_shader_write_time = 0;
 {
   CAMetalLayer *layer = [CAMetalLayer layer];
   layer.device = global_device;
+  layer.displaySyncEnabled = NO; // Disable VSync to unlock FPS
   global_metal_layer = layer;
   return layer;
 }

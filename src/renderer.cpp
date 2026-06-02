@@ -204,6 +204,7 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
   global_device = (MTL::Device *)device;
   global_metal_layer = (CA::MetalLayer *)metal_layer;
   global_metal_layer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  global_metal_layer->setDisplaySyncEnabled(false);
   global_command_queue = global_device->newCommandQueue();
 
   global_gpu_heap = global_device->newBuffer(512 * 1024 * 1024,
