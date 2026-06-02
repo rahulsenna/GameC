@@ -173,7 +173,10 @@ struct RenderGroupEntry_UploadTexture
   U32 handle;
   U32 width;
   U32 height;
-  // Raw pixel data (RGBA, 8 bits per channel) immediately follows this struct
+  U32 format;
+  U32 num_mips;
+  U32 data_size;
+  // Raw data immediately follows this struct
 };
 
 // Removed duplicate Vertex struct from here
@@ -228,7 +231,8 @@ struct RenderGroup
 
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a);
 void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
-                               U32 height);
+                               U32 height, U32 format, U32 num_mips,
+                               U32 data_size);
 void *PushUploadGeometryCommand(RenderGroup *group, GpuPtr offset, U32 size);
 void PushDrawMeshCommand(RenderGroup *group, Uniforms uniforms,
                          MaterialTextures textures, U32 shader_type,

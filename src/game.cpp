@@ -26,11 +26,11 @@ void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 }
 
 void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
-                               U32 height)
+                               U32 height, U32 format, U32 num_mips,
+                               U32 data_size)
 {
-  U32 pixel_data_size = width * height * 4;
   U32 total_size = sizeof(RenderGroupEntryHeader) +
-                   sizeof(RenderGroupEntry_UploadTexture) + pixel_data_size;
+                   sizeof(RenderGroupEntry_UploadTexture) + data_size;
   if (group->size + total_size > group->max_size)
   {
     printf("ASSERT FAILURE: size=%u, total_size=%u, max_size=%u, w=%u, h=%u\n",
@@ -47,6 +47,9 @@ void *PushUploadTextureCommand(RenderGroup *group, U32 handle, U32 width,
   entry->handle = handle;
   entry->width = width;
   entry->height = height;
+  entry->format = format;
+  entry->num_mips = num_mips;
+  entry->data_size = data_size;
 
   void *dst_pixels = (void *)(entry + 1);
   group->size += total_size;
@@ -188,27 +191,27 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     // Default textures
     U32 default_albedo = next_tex_handle++;
     void *albedo_dst = PushUploadTextureCommand(&out_output->render_group,
-                                                default_albedo, 1, 1);
+                                                default_albedo, 1, 1, 0, 1, 4);
     *(U32 *)albedo_dst = 0xFFFFFFFF; // White
 
     U32 default_normal = next_tex_handle++;
     void *normal_dst = PushUploadTextureCommand(&out_output->render_group,
-                                                default_normal, 1, 1);
+                                                default_normal, 1, 1, 0, 1, 4);
     *(U32 *)normal_dst = 0xFFFF8080; // Flat normal
 
     U32 default_metallic = next_tex_handle++;
-    void *metallic_dst = PushUploadTextureCommand(&out_output->render_group,
-                                                  default_metallic, 1, 1);
+    void *metallic_dst = PushUploadTextureCommand(
+        &out_output->render_group, default_metallic, 1, 1, 0, 1, 4);
     *(U32 *)metallic_dst = 0xFF000000; // Black
 
     U32 default_roughness = next_tex_handle++;
-    void *roughness_dst = PushUploadTextureCommand(&out_output->render_group,
-                                                   default_roughness, 1, 1);
+    void *roughness_dst = PushUploadTextureCommand(
+        &out_output->render_group, default_roughness, 1, 1, 0, 1, 4);
     *(U32 *)roughness_dst = 0xFFFFFFFF; // White
 
     U32 default_ao = next_tex_handle++;
-    void *ao_dst =
-        PushUploadTextureCommand(&out_output->render_group, default_ao, 1, 1);
+    void *ao_dst = PushUploadTextureCommand(&out_output->render_group,
+                                            default_ao, 1, 1, 0, 1, 4);
     *(U32 *)ao_dst = 0xFFFFFFFF; // White
 
     MaterialTextures default_textures = {};

@@ -231,25 +231,66 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
 
       MTL::TextureDescriptor *textureDesc =
           MTL::TextureDescriptor::alloc()->init();
-      textureDesc->setPixelFormat(MTL::PixelFormatRGBA8Unorm);
+
+      MTL::PixelFormat pixelFormat = MTL::PixelFormatRGBA8Unorm;
+      if (entry->format == 1)
+        pixelFormat = MTL::PixelFormatASTC_4x4_LDR;
+      else if (entry->format == 2)
+        pixelFormat = MTL::PixelFormatASTC_4x4_LDR;
+
+      textureDesc->setPixelFormat(pixelFormat);
       textureDesc->setWidth(entry->width);
       textureDesc->setHeight(entry->height);
 
-      NS::UInteger mipLevels =
-          std::floor(std::log2(std::max(entry->width, entry->height))) + 1;
-      textureDesc->setMipmapLevelCount(mipLevels);
+      NS::UInteger mipLevels = entry->num_mips;
+      bool generate_mips = false;
+      if (entry->format == 0 && entry->num_mips == 1)
+      {
+        mipLevels =
+            std::floor(std::log2(std::max(entry->width, entry->height))) + 1;
+        if (mipLevels > 1)
+        {
+          generate_mips = true;
+        }
+      }
 
+      textureDesc->setMipmapLevelCount(mipLevels);
       MTL::Texture *texture = global_device->newTexture(textureDesc);
-      MTL::Region region =
-          MTL::Region::Make2D(0, 0, entry->width, entry->height);
-      texture->replaceRegion(region, 0, pixels, 4 * entry->width);
+
+      U8 *current_pixels = (U8 *)pixels;
+      for (U32 mip = 0; mip < entry->num_mips; ++mip)
+      {
+        U32 mip_width = std::max(1u, entry->width >> mip);
+        U32 mip_height = std::max(1u, entry->height >> mip);
+
+        MTL::Region region = MTL::Region::Make2D(0, 0, mip_width, mip_height);
+
+        U32 bytes_per_row = 0;
+        U32 mip_size = 0;
+
+        if (entry->format == 0)
+        { // RGBA8
+          bytes_per_row = mip_width * 4;
+          mip_size = mip_width * mip_height * 4;
+        }
+        else
+        { // ASTC 4x4
+          U32 blocks_x = (mip_width + 3) / 4;
+          U32 blocks_y = (mip_height + 3) / 4;
+          bytes_per_row = blocks_x * 16;
+          mip_size = blocks_x * blocks_y * 16;
+        }
+
+        texture->replaceRegion(region, mip, current_pixels, bytes_per_row);
+        current_pixels += mip_size;
+      }
 
       MTL::CommandBuffer *blitCommandBuffer =
           global_command_queue->commandBuffer();
       MTL::BlitCommandEncoder *blitEncoder =
           blitCommandBuffer->blitCommandEncoder();
 
-      if (mipLevels > 1)
+      if (generate_mips)
       {
         blitEncoder->generateMipmaps(texture);
       }
@@ -266,8 +307,7 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
 
       textureDesc->release();
 
-      offset += sizeof(RenderGroupEntry_UploadTexture) +
-                (entry->width * entry->height * 4);
+      offset += sizeof(RenderGroupEntry_UploadTexture) + entry->data_size;
     }
     else if (header->type == RenderGroupEntryType_UploadGeometry)
     {
@@ -347,8 +387,7 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       RenderGroupEntry_UploadTexture *entry =
           (RenderGroupEntry_UploadTexture *)(output->render_group.base +
                                              offset);
-      offset += sizeof(RenderGroupEntry_UploadTexture) +
-                (entry->width * entry->height * 4);
+      offset += sizeof(RenderGroupEntry_UploadTexture) + entry->data_size;
     }
     else if (header->type == RenderGroupEntryType_UploadGeometry)
     {

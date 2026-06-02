@@ -605,8 +605,9 @@ FBXModel LoadFBX(Arena *arena, const char *filepath, RenderGroup *render_group,
                   }
                 }
                 final_handle = (*next_texture_handle)++;
-                void *dst_pixels = PushUploadTextureCommand(
-                    render_group, final_handle, width, height);
+                void *dst_pixels =
+                    PushUploadTextureCommand(render_group, final_handle, width,
+                                             height, 0, 1, width * height * 4);
                 memcpy(dst_pixels, pixels, width * height * 4);
                 stbi_image_free(pixels);
 
@@ -862,11 +863,19 @@ U32 LoadCookedTexture(const char *tex_path, RenderGroup *render_group,
   }
 
   U32 handle = (*next_tex_handle)++;
-  void *dst_pixels = PushUploadTextureCommand(render_group, handle,
-                                              header.width, header.height);
 
-  U32 pixel_size = header.width * header.height * header.channels;
-  fread(dst_pixels, pixel_size, 1, f);
+  // Calculate total remaining file size for data_size
+  long current_pos = ftell(f);
+  fseek(f, 0, SEEK_END);
+  long end_pos = ftell(f);
+  fseek(f, current_pos, SEEK_SET);
+  U32 data_size = (U32)(end_pos - current_pos);
+
+  void *dst_pixels = PushUploadTextureCommand(
+      render_group, handle, header.width, header.height, header.format,
+      header.num_mips, data_size);
+
+  fread(dst_pixels, data_size, 1, f);
   fclose(f);
 
   return handle;

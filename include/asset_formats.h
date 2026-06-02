@@ -18,6 +18,29 @@
 #define MESH_VERSION 1
 #define TEX_VERSION 1
 
+// --- .tex File Header ---
+// Stores pixel data, optionally compressed, optionally with a full mip chain.
+enum TexFormat : U32
+{
+  TexFormat_RGBA8_UNorm = 0,
+  TexFormat_ASTC4x4_UNorm = 1,
+  TexFormat_ASTC4x4_sRGB = 2
+};
+
+struct CookedTexFileHeader
+{
+  U32 magic;   // TEX_MAGIC
+  U32 version; // TEX_VERSION
+  U32 width;
+  U32 height;
+  TexFormat format;
+  U32 num_mips; // 1 = base level only
+  U32 is_orm;   // 1 = this is a channel-packed ORM texture
+  U32 _pad;
+  // Followed by: U32 mip_offsets[num_mips] (relative to the start of pixel data
+  // block) Followed by: U32 mip_sizes[num_mips] Followed by: raw pixel data
+};
+
 // --- Cooked Vertex (matches the runtime Vertex struct layout) ---
 struct CookedVertex
 {
@@ -78,19 +101,4 @@ struct CookedMeshFileHeader
   U32 _pad[3]; // Padding for alignment / future use
   // Followed by: CookedTexName[num_texture_names]
   // Followed by: CookedSubMeshHeader + data for each submesh
-};
-
-// --- .tex File Header ---
-// Stores raw RGBA8 pixel data, optionally with a full mip chain.
-struct CookedTexFileHeader
-{
-  U32 magic;   // TEX_MAGIC
-  U32 version; // TEX_VERSION
-  U32 width;
-  U32 height;
-  U32 channels; // Always 4 (RGBA)
-  U32 num_mips; // 1 = base level only
-  U32 is_orm;   // 1 = this is a channel-packed ORM texture
-  U32 _pad;
-  // Followed by: pixel data (width * height * channels bytes for mip 0)
 };

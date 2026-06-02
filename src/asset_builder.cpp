@@ -10,6 +10,9 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 #include "ufbx.h"
 
 #include "asset_formats.h"
@@ -51,44 +54,115 @@ static void EnsureDir(const fs::path &dir)
 // Texture Cooking
 // ============================================================================
 
-static bool CookTexture(const fs::path &src_path, const fs::path &dst_path,
-                        bool is_orm)
+#pragma pack(push, 1)
+struct KTXHeader
 {
-  int width, height, channels;
-  stbi_set_flip_vertically_on_load(true);
-  unsigned char *data =
-      stbi_load(src_path.c_str(), &width, &height, &channels, 4);
-  if (!data)
+  uint8_t identifier[12];
+  uint32_t endianness;
+  uint32_t glType;
+  uint32_t glTypeSize;
+  uint32_t glFormat;
+  uint32_t glInternalFormat;
+  uint32_t glBaseInternalFormat;
+  uint32_t pixelWidth;
+  uint32_t pixelHeight;
+  uint32_t pixelDepth;
+  uint32_t numberOfArrayElements;
+  uint32_t numberOfFaces;
+  uint32_t numberOfMipmapLevels;
+  uint32_t bytesOfKeyValueData;
+};
+#pragma pack(pop)
+
+static bool CookTextureASTC(const fs::path &src_path, const fs::path &dst_path,
+                            bool is_srgb)
+{
+  std::string temp_ktx = dst_path.string() + ".temp.ktx";
+
+  std::string cmd = "xcrun TextureConverter --compression_format=ASTC4x4 "
+                    "--compression_quality=Normal ";
+  if (!is_srgb)
   {
-    printf("  [ERROR] Failed to load texture: %s\n", src_path.c_str());
+    cmd += "--channel_weighting=Linear ";
+  }
+  cmd += "--output=\"" + temp_ktx + "\" \"" + src_path.string() +
+         "\" > /dev/null 2>&1";
+
+  int ret = system(cmd.c_str());
+  if (ret != 0)
+  {
+    printf("  [ERROR] TextureConverter failed for %s\n", src_path.c_str());
     return false;
   }
+
+  FILE *f_ktx = fopen(temp_ktx.c_str(), "rb");
+  if (!f_ktx)
+    return false;
+
+  KTXHeader ktx;
+  fread(&ktx, sizeof(KTXHeader), 1, f_ktx);
+
+  fseek(f_ktx, ktx.bytesOfKeyValueData, SEEK_CUR);
+
+  uint32_t num_mips = ktx.numberOfMipmapLevels;
+  if (num_mips == 0)
+    num_mips = 1;
+
+  struct MipData
+  {
+    uint32_t size;
+    std::vector<uint8_t> data;
+  };
+  std::vector<MipData> mips;
+
+  for (uint32_t i = 0; i < num_mips; i++)
+  {
+    uint32_t imageSize = 0;
+    fread(&imageSize, sizeof(uint32_t), 1, f_ktx);
+    MipData mip;
+    mip.size = imageSize;
+    mip.data.resize(imageSize);
+    fread(mip.data.data(), 1, imageSize, f_ktx);
+
+    uint32_t padding = 3 - ((imageSize + 3) % 4);
+    if (padding > 0)
+    {
+      fseek(f_ktx, padding, SEEK_CUR);
+    }
+    mips.push_back(mip);
+  }
+
+  fclose(f_ktx);
+  fs::remove(temp_ktx);
 
   EnsureDir(dst_path.parent_path());
-
-  FILE *f = fopen(dst_path.c_str(), "wb");
-  if (!f)
-  {
-    printf("  [ERROR] Failed to write: %s\n", dst_path.c_str());
-    stbi_image_free(data);
-    return false;
-  }
+  FILE *f_out = fopen(dst_path.c_str(), "wb");
 
   CookedTexFileHeader header = {};
   header.magic = TEX_MAGIC;
   header.version = TEX_VERSION;
-  header.width = (U32)width;
-  header.height = (U32)height;
-  header.channels = 4;
-  header.num_mips = 1;
-  header.is_orm = is_orm ? 1 : 0;
+  header.width = ktx.pixelWidth;
+  header.height = ktx.pixelHeight;
+  header.format = is_srgb ? TexFormat_ASTC4x4_sRGB : TexFormat_ASTC4x4_UNorm;
+  header.num_mips = num_mips;
+  header.is_orm = 0;
 
-  fwrite(&header, sizeof(header), 1, f);
-  fwrite(data, width * height * 4, 1, f);
+  fwrite(&header, sizeof(header), 1, f_out);
+  for (auto &mip : mips)
+  {
+    fwrite(mip.data.data(), 1, mip.size, f_out);
+  }
+  fclose(f_out);
 
-  fclose(f);
-  stbi_image_free(data);
+  printf("  [ASTC] %s (%dx%d, %d mips)\n", dst_path.filename().c_str(),
+         header.width, header.height, header.num_mips);
   return true;
+}
+
+static bool CookTexture(const fs::path &src_path, const fs::path &dst_path,
+                        bool is_orm)
+{
+  return CookTextureASTC(src_path, dst_path, !is_orm);
 }
 
 // Cook an ORM texture from separate AO, Roughness, and Metallic maps.
@@ -189,33 +263,14 @@ static bool CookORMTexture(const fs::path &ao_path,
 
   EnsureDir(dst_path.parent_path());
 
-  FILE *f = fopen(dst_path.c_str(), "wb");
-  if (!f)
-  {
-    printf("  [ERROR] Failed to write: %s\n", dst_path.c_str());
-    free(out);
-    if (ao_data)
-      stbi_image_free(ao_data);
-    if (roughness_data)
-      stbi_image_free(roughness_data);
-    if (metallic_data)
-      stbi_image_free(metallic_data);
-    return false;
-  }
+  fs::path temp_png =
+      dst_path.parent_path() / (dst_path.filename().string() + ".temp.png");
+  stbi_write_png(temp_png.c_str(), width, height, 4, out, width * 4);
 
-  CookedTexFileHeader header = {};
-  header.magic = TEX_MAGIC;
-  header.version = TEX_VERSION;
-  header.width = (U32)width;
-  header.height = (U32)height;
-  header.channels = 4;
-  header.num_mips = 1;
-  header.is_orm = 1;
+  bool success = CookTextureASTC(temp_png, dst_path, false);
 
-  fwrite(&header, sizeof(header), 1, f);
-  fwrite(out, width * height * 4, 1, f);
+  fs::remove(temp_png);
 
-  fclose(f);
   free(out);
   if (ao_data)
     stbi_image_free(ao_data);
@@ -224,8 +279,7 @@ static bool CookORMTexture(const fs::path &ao_path,
   if (metallic_data)
     stbi_image_free(metallic_data);
 
-  printf("  [ORM] Packed → %s (%dx%d)\n", dst_path.c_str(), width, height);
-  return true;
+  return success;
 }
 
 // ============================================================================
@@ -305,23 +359,13 @@ static bool CookFBX(const fs::path &src_path, const fs::path &dst_dir,
     fs::path tex_path = dst_dir / tex_name;
 
     EnsureDir(tex_path.parent_path());
-    FILE *tf = fopen(tex_path.c_str(), "wb");
-    if (tf)
-    {
-      CookedTexFileHeader th = {};
-      th.magic = TEX_MAGIC;
-      th.version = TEX_VERSION;
-      th.width = (U32)width;
-      th.height = (U32)height;
-      th.channels = 4;
-      th.num_mips = 1;
-      th.is_orm = 0;
+    fs::path temp_png = dst_dir / (tex_name + ".temp.png");
+    stbi_write_png(temp_png.c_str(), width, height, 4, pixels, width * 4);
 
-      fwrite(&th, sizeof(th), 1, tf);
-      fwrite(pixels, width * height * 4, 1, tf);
-      fclose(tf);
-      printf("    [TEX] %s (%dx%d)\n", tex_name.c_str(), width, height);
-    }
+    bool is_srgb = (suffix == "_albedo");
+    CookTextureASTC(temp_png, tex_path, is_srgb);
+
+    fs::remove(temp_png);
     stbi_image_free(pixels);
 
     U32 idx = (U32)tex_names.size();
@@ -714,7 +758,7 @@ static void CookTextureSet(const fs::path &src_dir, const fs::path &dst_dir,
     if (force || NeedsRecook(albedo_src, dst))
     {
       printf("  [TEX] %s\n", albedo_src.filename().c_str());
-      CookTexture(albedo_src, dst, false);
+      CookTextureASTC(albedo_src, dst, true);
     }
   }
 
@@ -724,7 +768,7 @@ static void CookTextureSet(const fs::path &src_dir, const fs::path &dst_dir,
     if (force || NeedsRecook(normal_src, dst))
     {
       printf("  [TEX] %s\n", normal_src.filename().c_str());
-      CookTexture(normal_src, dst, false);
+      CookTextureASTC(normal_src, dst, false);
     }
   }
 
