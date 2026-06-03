@@ -23,7 +23,10 @@ build_asset_builder() {
 
 build_game() {
     echo "Compiling Game Code..."
+    UI_FLAG=""
+    [ "$enable_ui" = true ] && UI_FLAG="-DENABLE_DEBUG_UI=1"
     clang++ -g -O0 \
+        $UI_FLAG \
         -std=c++17 -fno-exceptions -fno-rtti \
         -Wno-deprecated \
         -I include/ \
@@ -35,7 +38,10 @@ build_game() {
 
 build_engine() {
     echo "Compiling Engine Code..."
+    UI_FLAG=""
+    [ "$enable_ui" = true ] && UI_FLAG="-DENABLE_DEBUG_UI=1"
     clang++ -g -O0 \
+        $UI_FLAG \
         -std=c++17 -fno-exceptions -fno-rtti \
         -I include/ \
         -framework Cocoa -framework Metal -framework QuartzCore \
@@ -44,11 +50,12 @@ build_engine() {
 }
 
 usage() {
-    echo "Usage: $0 [-s] [-a] [-g] [-e] [-h]"
+    echo "Usage: $0 [-s] [-a] [-g] [-e] [-u] [-h]"
     echo "  -s   Build shaders only"
     echo "  -a   Build asset builder only"
     echo "  -g   Build game code only"
     echo "  -e   Build engine only"
+    echo "  -u   Enable debug UI"
     echo "  -h   Show help"
 }
 
@@ -56,9 +63,10 @@ do_shaders=false
 do_asset_builder=false
 do_game=false
 do_engine=false
+enable_ui=false
 any_selected=false
 
-while getopts ":sageh" opt; do
+while getopts ":sageuh" opt; do
     case "$opt" in
         s)
             do_shaders=true
@@ -75,6 +83,9 @@ while getopts ":sageh" opt; do
         e)
             do_engine=true
             any_selected=true
+            ;;
+        u)
+            enable_ui=true
             ;;
         h)
             usage

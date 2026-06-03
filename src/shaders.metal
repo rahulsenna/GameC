@@ -2,7 +2,7 @@
 using namespace metal;
 
 #define DEBUG_CSM 0
-#define SHADOW_MAP_RES 4096.0/4
+#define SHADOW_MAP_RES 4096.0 / 4
 
 struct VertexIn
 {
@@ -463,4 +463,67 @@ fragment float4 text_fragment_main(RasterizerData in [[stage_in]],
 
   // Draw white text
   return float4(1.0, 1.0, 1.0, alpha);
+}
+
+struct UIRasterizerData
+{
+  float4 position [[position]];
+  float2 tex_coord;
+  float4 color;
+};
+
+struct UIVertex
+{
+  float2 position;
+  float2 tex_coord;
+  uchar4 color;
+};
+
+struct UIRootData
+{
+  device UIVertex *vertex_heap;
+};
+
+vertex UIRasterizerData ui_vertex_main(uint vertexID [[vertex_id]],
+                                       constant UIRootData *root [[buffer(0)]],
+                                       constant Uniforms &uniforms
+                                       [[buffer(1)]])
+{
+  UIRasterizerData out;
+  uint id = uniforms.vertex_offset + vertexID;
+
+  out.position =
+      uniforms.mvp_matrix * float4(root->vertex_heap[id].position, 0.0, 1.0);
+  out.tex_coord = root->vertex_heap[id].tex_coord;
+  out.color = float4(root->vertex_heap[id].color) / 255.0;
+  return out;
+}
+
+fragment float4 ui_fragment_main(UIRasterizerData in [[stage_in]],
+                                 constant Uniforms &uniforms [[buffer(1)]],
+                                 constant TextureHeap &texture_heap
+                                 [[buffer(2)]],
+                                 depth2d_array<float> shadow_map [[texture(0)]])
+{
+  constexpr sampler textureSampler(mag_filter::linear, min_filter::linear,
+                                   mip_filter::linear, s_address::clamp_to_edge,
+                                   t_address::clamp_to_edge);
+  float4 tex_color = float4(1.0);
+
+  if (uniforms.albedo_tex == 9999)
+  {
+    float depth =
+        shadow_map.sample(textureSampler, in.tex_coord, uniforms.cascade_index);
+    // depth is between 0 and 1, we can boost it or pow it if it's too bright
+    // but for ortho shadow maps it's linear. Let's just output it.
+    tex_color = float4(depth, depth, depth, 1.0);
+  }
+  else if (uniforms.albedo_tex != 0)
+  {
+    tex_color = texture_heap.textures[uniforms.albedo_tex].sample(
+        textureSampler, in.tex_coord);
+  }
+
+  float4 final_color = in.color * tex_color;
+  return final_color;
 }

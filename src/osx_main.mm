@@ -103,6 +103,48 @@ static time_t global_shader_write_time = 0;
 {
   return YES;
 }
+- (void)updateMousePosition:(NSEvent *)event
+{
+  NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+  NSRect bounds = [self bounds];
+  CGSize drawableSize = global_metal_layer.drawableSize;
+  float scale_x = drawableSize.width / bounds.size.width;
+  float scale_y = drawableSize.height / bounds.size.height;
+  global_input.mouse_x = p.x * scale_x;
+  global_input.mouse_y = (bounds.size.height - p.y) * scale_y;
+}
+- (void)mouseDown:(NSEvent *)event
+{
+  global_input.mouse_left_down = 1;
+  [self updateMousePosition:event];
+}
+- (void)mouseUp:(NSEvent *)event
+{
+  global_input.mouse_left_down = 0;
+  [self updateMousePosition:event];
+}
+- (void)rightMouseDown:(NSEvent *)event
+{
+  global_input.mouse_right_down = 1;
+  [self updateMousePosition:event];
+}
+- (void)rightMouseUp:(NSEvent *)event
+{
+  global_input.mouse_right_down = 0;
+  [self updateMousePosition:event];
+}
+- (void)mouseMoved:(NSEvent *)event
+{
+  [self updateMousePosition:event];
+}
+- (void)mouseDragged:(NSEvent *)event
+{
+  [self updateMousePosition:event];
+}
+- (void)scrollWheel:(NSEvent *)event
+{
+  global_input.mouse_scroll_y += [event scrollingDeltaY];
+}
 - (void)keyDown:(NSEvent *)event
 {
   unsigned short key = [event keyCode];
@@ -200,6 +242,7 @@ int main(int argc, const char *argv[])
                                         defer:NO];
     [window cascadeTopLeftFromPoint:NSMakePoint(20, 20)];
     window.title = @"Metal Engine (Handmade Style)";
+    [window setAcceptsMouseMovedEvents:YES];
 
     MainWindowDelegate *windowDelegate = [[MainWindowDelegate alloc] init];
     window.delegate = windowDelegate;
@@ -270,9 +313,14 @@ int main(int argc, const char *argv[])
 
         if (global_game_code.UpdateAndRender)
         {
+          global_input.window_width = global_metal_layer.drawableSize.width;
+          global_input.window_height = global_metal_layer.drawableSize.height;
           global_game_code.UpdateAndRender(global_arena, &global_input, dt,
                                            &output);
         }
+
+        // Reset scroll wheel
+        global_input.mouse_scroll_y = 0;
 
         Renderer_RenderFrame(&output);
       }

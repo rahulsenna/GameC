@@ -1,4 +1,5 @@
 #pragma once
+
 #include "asset_formats.h"
 #include "base_arena.h"
 #include "math_utils.h"
@@ -18,6 +19,15 @@ struct GameInput
   B32 key_shift;
   B32 key_ctrl;
   B32 key_space;
+
+  F32 mouse_x;
+  F32 mouse_y;
+  F32 mouse_scroll_y;
+  B32 mouse_left_down;
+  B32 mouse_right_down;
+
+  F32 window_width;
+  F32 window_height;
 };
 
 struct Camera
@@ -54,7 +64,7 @@ inline GpuPtr gpuMalloc(GpuAllocator *allocator, U64 size)
 }
 
 #define MAX_BONES 128
-#define SHADOW_MAP_RES 4096/4
+#define SHADOW_MAP_RES 4096 / 4
 
 struct Vertex
 {
@@ -159,6 +169,16 @@ struct GameState
 
   PlayerController player;
   Font main_font;
+
+#if ENABLE_DEBUG_UI
+  void *nk_ctx;
+  U32 nk_font_tex;
+  U32 nk_null_tex_id;
+  Vec2 nk_null_tex_uv;
+#endif
+
+  Vec4 cascade_ends;
+  Vec3 light_dir;
 };
 
 // -- Render Command Structures --
@@ -170,6 +190,7 @@ enum RenderGroupEntryType
   RenderGroupEntryType_DrawMesh,
   RenderGroupEntryType_UploadGeometry,
   RenderGroupEntryType_DrawDynamicMesh,
+  RenderGroupEntryType_DrawUI,
 };
 
 struct RenderGroupEntryHeader
@@ -255,6 +276,26 @@ struct RenderGroupEntry_DrawDynamicMesh
   // uniforms.vertex_offset before issuing the draw.
 };
 
+struct UIVertex
+{
+  Vec2 position;
+  Vec2 tex_coord;
+  U8 color[4];
+};
+
+struct RenderGroupEntry_DrawUI
+{
+  U32 texture_handle;
+  U32 vertex_count;
+  U32 index_count;
+  // These offsets are relative to the start of the uniform buffer / vertex
+  // buffer for the UI.
+  U32 vertex_offset;
+  U32 index_offset;
+  // UIVertex[vertex_count] and U16[index_count] follow this struct in the
+  // render group.
+};
+
 struct RenderGroup
 {
   U32 size;
@@ -276,6 +317,9 @@ void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
                                 MaterialTextures textures, U32 shader_type,
                                 U32 vertex_count, const Vertex *vertices,
                                 Vec3 bounds_center, F32 bounds_radius);
+void PushDrawUICommand(RenderGroup *group, U32 texture_handle, U32 vertex_count,
+                       const UIVertex *vertices, U32 index_count,
+                       const U16 *indices);
 
 Font LoadCookedFont(Arena *arena, const char *path, RenderGroup *render_group,
                     U32 *next_tex_handle);

@@ -21,8 +21,10 @@ static MTL::CommandQueue *global_command_queue = nullptr;
 static MTL::RenderPipelineState *global_pipeline_state = nullptr;
 static MTL::RenderPipelineState *global_grid_pipeline_state = nullptr;
 static MTL::RenderPipelineState *global_text_pipeline_state = nullptr;
+static MTL::RenderPipelineState *global_ui_pipeline_state = nullptr;
 static MTL::DepthStencilState *global_depth_state = nullptr;
 static MTL::DepthStencilState *global_depth_state_no_write = nullptr;
+static MTL::DepthStencilState *global_depth_state_always = nullptr;
 static MTL::Texture *global_depth_texture = nullptr;
 static MTL::RenderPipelineState *global_shadow_pipeline_state = nullptr;
 static MTL::Texture *global_shadow_texture = nullptr;
@@ -158,6 +160,29 @@ extern "C" void Renderer_LoadShaders()
     std::cerr << "Failed to create text pipeline state\n";
   }
 
+  // UI Pipeline
+  MTL::Function *uiVertexFunction = defaultLibrary->newFunction(
+      NS::String::string("ui_vertex_main", NS::UTF8StringEncoding));
+  MTL::Function *uiFragmentFunction = defaultLibrary->newFunction(
+      NS::String::string("ui_fragment_main", NS::UTF8StringEncoding));
+  pipelineStateDescriptor->setLabel(
+      NS::String::string("UI Pipeline", NS::UTF8StringEncoding));
+  pipelineStateDescriptor->setVertexFunction(uiVertexFunction);
+  pipelineStateDescriptor->setFragmentFunction(uiFragmentFunction);
+
+  if (global_ui_pipeline_state)
+  {
+    global_ui_pipeline_state->release();
+  }
+  global_ui_pipeline_state =
+      global_device->newRenderPipelineState(pipelineStateDescriptor, &error);
+  if (!global_ui_pipeline_state)
+  {
+    std::cerr << "Failed to create UI pipeline state\n";
+  }
+  uiVertexFunction->release();
+  uiFragmentFunction->release();
+
   // Shadow Pipeline
   MTL::Function *shadowVertexFunction = defaultLibrary->newFunction(
       NS::String::string("shadow_vertex_main", NS::UTF8StringEncoding));
@@ -249,6 +274,9 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
 
   depthDesc->setDepthWriteEnabled(false);
   global_depth_state_no_write = global_device->newDepthStencilState(depthDesc);
+
+  depthDesc->setDepthCompareFunction(MTL::CompareFunctionAlways);
+  global_depth_state_always = global_device->newDepthStencilState(depthDesc);
   depthDesc->release();
 
   MTL::TextureDescriptor *shadowDesc =
@@ -414,6 +442,14 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       offset += sizeof(RenderGroupEntry_DrawDynamicMesh) +
                 entry->vertex_count * sizeof(Vertex);
     }
+    else if (header->type == RenderGroupEntryType_DrawUI)
+    {
+      RenderGroupEntry_DrawUI *entry =
+          (RenderGroupEntry_DrawUI *)(output->render_group.base + offset);
+      offset += sizeof(RenderGroupEntry_DrawUI) +
+                entry->vertex_count * sizeof(UIVertex) +
+                entry->index_count * sizeof(U16);
+    }
   }
 
   // Loop 2: Allocations
@@ -474,6 +510,29 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       entry->uniforms.vertex_offset = v_offset / sizeof(Vertex);
 
       offset += sizeof(RenderGroupEntry_DrawDynamicMesh) + vertex_bytes;
+    }
+    else if (header->type == RenderGroupEntryType_DrawUI)
+    {
+      RenderGroupEntry_DrawUI *entry =
+          (RenderGroupEntry_DrawUI *)(output->render_group.base + offset);
+
+      UIVertex *src_verts = (UIVertex *)(entry + 1);
+      U16 *src_indices = (U16 *)(src_verts + entry->vertex_count);
+
+      U32 vertex_bytes = entry->vertex_count * sizeof(UIVertex);
+      U32 index_bytes = entry->index_count * sizeof(U16);
+
+      U32 v_offset = FrameArenaAlloc(vertex_bytes, sizeof(UIVertex));
+      memcpy((U8 *)global_gpu_heap->contents() + v_offset, src_verts,
+             vertex_bytes);
+      entry->vertex_offset = v_offset / sizeof(UIVertex);
+
+      U32 i_offset = FrameArenaAlloc(index_bytes, sizeof(U16));
+      memcpy((U8 *)global_gpu_heap->contents() + i_offset, src_indices,
+             index_bytes);
+      entry->index_offset = i_offset; // Absolute byte offset
+
+      offset += sizeof(RenderGroupEntry_DrawUI) + vertex_bytes + index_bytes;
     }
   }
 
@@ -708,6 +767,44 @@ extern "C" void Renderer_RenderFrame(GameOutput *output)
       offset += sizeof(RenderGroupEntry_DrawDynamicMesh) +
                 entry->vertex_count * sizeof(Vertex);
     }
+#if ENABLE_DEBUG_UI
+    else if (header->type == RenderGroupEntryType_DrawUI)
+    {
+      RenderGroupEntry_DrawUI *entry =
+          (RenderGroupEntry_DrawUI *)(output->render_group.base + offset);
+
+      commandEncoder->setRenderPipelineState(global_ui_pipeline_state);
+      commandEncoder->setDepthStencilState(global_depth_state_always);
+      commandEncoder->setCullMode(MTL::CullModeNone);
+      current_shader_type = -1; // Force rebind next time
+
+      Uniforms ui_uniforms = {};
+      ui_uniforms.albedo_tex = entry->texture_handle;
+      ui_uniforms.vertex_offset = entry->vertex_offset;
+      ui_uniforms.cascade_index = 0;
+      if (entry->texture_handle >= 9999 && entry->texture_handle < 9999 + 4)
+      {
+        ui_uniforms.albedo_tex = 9999;
+        ui_uniforms.cascade_index = entry->texture_handle - 9999;
+      }
+
+      float w = drawable->texture()->width();
+      float h = drawable->texture()->height();
+      ui_uniforms.mvp_matrix =
+          math_make_orthographic(0.0f, w, h, 0.0f, -1.0f, 1.0f);
+
+      commandEncoder->setVertexBytes(&ui_uniforms, sizeof(Uniforms), 1);
+      commandEncoder->setFragmentBytes(&ui_uniforms, sizeof(Uniforms), 1);
+
+      commandEncoder->drawIndexedPrimitives(
+          MTL::PrimitiveTypeTriangle, entry->index_count, MTL::IndexTypeUInt16,
+          global_gpu_heap, entry->index_offset);
+
+      offset += sizeof(RenderGroupEntry_DrawUI) +
+                entry->vertex_count * sizeof(UIVertex) +
+                entry->index_count * sizeof(U16);
+    }
+#endif
   }
 
   commandEncoder->endEncoding();

@@ -6,6 +6,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if ENABLE_DEBUG_UI
+#define NK_INCLUDE_FIXED_TYPES
+#define NK_INCLUDE_STANDARD_IO
+#define NK_INCLUDE_STANDARD_VARARGS
+#define NK_INCLUDE_DEFAULT_ALLOCATOR
+#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
+#define NK_INCLUDE_FONT_BAKING
+#define NK_INCLUDE_DEFAULT_FONT
+#define NK_IMPLEMENTATION
+#define NK_BUTTON_TRIGGER_ON_RELEASE
+#include "nuklear.h"
+#endif
+
 void PushClearCommand(RenderGroup *group, F32 r, F32 g, F32 b, F32 a)
 {
   U32 total_size =
@@ -222,6 +235,35 @@ void PushDrawDynamicMeshCommand(RenderGroup *group, Uniforms uniforms,
   group->size += total_size;
 }
 
+void PushDrawUICommand(RenderGroup *group, U32 texture_handle, U32 vertex_count,
+                       const UIVertex *vertices, U32 index_count,
+                       const U16 *indices)
+{
+  U32 total_size = sizeof(RenderGroupEntryHeader) +
+                   sizeof(RenderGroupEntry_DrawUI) +
+                   vertex_count * sizeof(UIVertex) + index_count * sizeof(U16);
+  Assert(group->size + total_size <= group->max_size);
+
+  RenderGroupEntryHeader *header =
+      (RenderGroupEntryHeader *)(group->base + group->size);
+  header->type = RenderGroupEntryType_DrawUI;
+
+  RenderGroupEntry_DrawUI *entry = (RenderGroupEntry_DrawUI *)(header + 1);
+  entry->texture_handle = texture_handle;
+  entry->vertex_count = vertex_count;
+  entry->index_count = index_count;
+  entry->vertex_offset = 0;
+  entry->index_offset = 0;
+
+  UIVertex *dst_verts = (UIVertex *)(entry + 1);
+  memcpy(dst_verts, vertices, vertex_count * sizeof(UIVertex));
+
+  U16 *dst_indices = (U16 *)(dst_verts + vertex_count);
+  memcpy(dst_indices, indices, index_count * sizeof(U16));
+
+  group->size += total_size;
+}
+
 Font LoadCookedFont(Arena *arena, const char *path, RenderGroup *render_group,
                     U32 *next_tex_handle)
 {
@@ -375,6 +417,45 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     state->gpu_allocator.used = GPU_FRAME_ARENA_TOTAL;
     state->time = 0.0f;
     U32 next_tex_handle = 1;
+
+#if ENABLE_DEBUG_UI
+    // Initialize Nuklear
+    state->nk_ctx = malloc(sizeof(nk_context));
+    nk_init_default((nk_context *)state->nk_ctx, 0);
+
+    struct nk_font_atlas atlas;
+    nk_font_atlas_init_default(&atlas);
+    nk_font_atlas_begin(&atlas);
+
+    struct nk_font_config cfg = nk_font_config(0);
+    cfg.oversample_h = 3;
+    cfg.oversample_v = 2;
+    struct nk_font *font = nk_font_atlas_add_from_file(
+        &atlas, "/System/Library/Fonts/SFNS.ttf", 18, &cfg);
+
+    state->nk_ctx = malloc(sizeof(nk_context));
+    nk_init_default((nk_context *)state->nk_ctx, &font->handle);
+
+    int w, h;
+    const void *image =
+        nk_font_atlas_bake(&atlas, &w, &h, NK_FONT_ATLAS_RGBA32);
+
+    state->nk_font_tex = next_tex_handle++;
+    void *font_tex_dst = PushUploadTextureCommand(
+        &out_output->render_group, state->nk_font_tex, w, h, 0, 1, w * h * 4);
+    memcpy(font_tex_dst, image, w * h * 4);
+
+    struct nk_draw_null_texture null_tex;
+    nk_font_atlas_end(&atlas, nk_handle_id((int)state->nk_font_tex), &null_tex);
+    state->nk_null_tex_id = null_tex.texture.id;
+    state->nk_null_tex_uv = {null_tex.uv.x, null_tex.uv.y};
+    if (atlas.default_font)
+      nk_style_set_font((nk_context *)state->nk_ctx,
+                        &atlas.default_font->handle);
+#endif
+
+    state->cascade_ends = {0.1f, 7.5f, 30.0f, 120.0f};
+    state->light_dir = math_normalize(Vec3{1.0f, 1.0f, 1.0f});
 
     // Default textures
     U32 default_albedo = next_tex_handle++;
@@ -763,14 +844,14 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
 
   // --- Common Scene Uniforms ---
   Uniforms base_uniforms = {};
-  base_uniforms.light_dir = math_normalize(Vec3{1.0f, 1.0f, 1.0f});
-  base_uniforms.light_color = Vec3{1.0f, 1.0f, 1.0f};
+  base_uniforms.light_dir = math_normalize(state->light_dir);
   base_uniforms.light_color = Vec3{1.0f, 1.0f, 1.0f};
   base_uniforms.camera_pos = state->camera.position;
   base_uniforms.camera_front = front;
   base_uniforms.ambient_intensity = 0.2f;
 
-  float cascade_ends[4] = {0.1f, 7.5f, 30.0f, 120.0f};
+  float cascade_ends[4] = {state->cascade_ends.x, state->cascade_ends.y,
+                           state->cascade_ends.z, state->cascade_ends.w};
   base_uniforms.cascade_splits = {cascade_ends[1], cascade_ends[2],
                                   cascade_ends[3], 0.0f};
 
@@ -1344,13 +1425,111 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
     snprintf(ui_text, sizeof(ui_text), "FPS: %.0f\nFrame: %.2f ms", avg_fps,
              avg_dt);
 
-    Mat4 ui_proj = math_make_orthographic(0, 800, 0, 800, -1, 1);
+    Mat4 ui_proj = math_make_orthographic(0, input->window_width, 0,
+                                          input->window_height, -1, 1);
     Uniforms ui_uniforms = base_uniforms;
     ui_uniforms.model_matrix = Mat4{Vec4{1, 0, 0, 0}, Vec4{0, 1, 0, 0},
                                     Vec4{0, 0, 1, 0}, Vec4{0, 0, 0, 1}};
     ui_uniforms.mvp_matrix = ui_proj * ui_uniforms.model_matrix;
 
     PushDrawTextCommand(&out_output->render_group, &state->main_font,
-                        ui_uniforms, ui_text, Vec3{20.0f, 750.0f, 0.0f}, 0.5f);
+                        ui_uniforms, ui_text,
+                        Vec3{10.0f, input->window_height - 20.0f, 0.0f}, 0.5f);
   }
+
+  // 7. Nuklear UI
+#if ENABLE_DEBUG_UI
+  {
+    nk_context *ctx = (nk_context *)state->nk_ctx;
+    nk_input_begin(ctx);
+    nk_input_motion(ctx, input->mouse_x, input->mouse_y);
+    nk_input_button(ctx, NK_BUTTON_LEFT, input->mouse_x, input->mouse_y,
+                    input->mouse_left_down);
+    nk_input_button(ctx, NK_BUTTON_RIGHT, input->mouse_x, input->mouse_y,
+                    input->mouse_right_down);
+    nk_input_scroll(ctx, nk_vec2(0, input->mouse_scroll_y));
+    nk_input_end(ctx);
+
+    if (nk_begin(ctx, "Shadow Debug", nk_rect(10, 60, 350, 1200),
+                 NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
+                     NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE))
+    {
+      nk_layout_row_dynamic(ctx, 30, 1);
+      nk_property_float(ctx, "Cascade 0 End", 0.01f, &state->cascade_ends.y,
+                        20.0f, 0.1f, 0.05f);
+      nk_property_float(ctx, "Cascade 1 End", state->cascade_ends.y,
+                        &state->cascade_ends.z, 100.0f, 0.5f, 0.1f);
+      nk_property_float(ctx, "Cascade 2 End", state->cascade_ends.z,
+                        &state->cascade_ends.w, 500.0f, 1.0f, 0.5f);
+
+      nk_layout_row_dynamic(ctx, 30, 1);
+      nk_property_float(ctx, "Light Dir X", -1.0f, &state->light_dir.x, 1.0f,
+                        0.01f, 0.005f);
+      nk_property_float(ctx, "Light Dir Y", -1.0f, &state->light_dir.y, 1.0f,
+                        0.01f, 0.005f);
+      nk_property_float(ctx, "Light Dir Z", -1.0f, &state->light_dir.z, 1.0f,
+                        0.01f, 0.005f);
+
+      nk_layout_row_dynamic(ctx, 30, 1);
+      nk_label(ctx, "Shadow Map Cascades:", NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 230, 1);
+      struct nk_image shadow_img0 = nk_image_id(9999);
+      nk_image(ctx, shadow_img0);
+      struct nk_image shadow_img1 = nk_image_id(10000);
+      nk_image(ctx, shadow_img1);
+      struct nk_image shadow_img2 = nk_image_id(10001);
+      nk_image(ctx, shadow_img2);
+    }
+    nk_end(ctx);
+
+    struct nk_convert_config config;
+    static const struct nk_draw_vertex_layout_element vertex_layout[] = {
+        {NK_VERTEX_POSITION, NK_FORMAT_FLOAT, NK_OFFSETOF(UIVertex, position)},
+        {NK_VERTEX_TEXCOORD, NK_FORMAT_FLOAT, NK_OFFSETOF(UIVertex, tex_coord)},
+        {NK_VERTEX_COLOR, NK_FORMAT_R8G8B8A8, NK_OFFSETOF(UIVertex, color)},
+        {NK_VERTEX_LAYOUT_END}};
+    memset(&config, 0, sizeof(config));
+    config.vertex_layout = vertex_layout;
+    config.vertex_size = sizeof(UIVertex);
+    config.vertex_alignment = alignof(UIVertex);
+    struct nk_draw_null_texture null_tex;
+    null_tex.texture.id = state->nk_null_tex_id;
+    null_tex.uv = nk_vec2(state->nk_null_tex_uv.x, state->nk_null_tex_uv.y);
+    config.tex_null = null_tex;
+    config.circle_segment_count = 22;
+    config.curve_segment_count = 22;
+    config.arc_segment_count = 22;
+    config.global_alpha = 1.0f;
+    config.shape_AA = NK_ANTI_ALIASING_ON;
+    config.line_AA = NK_ANTI_ALIASING_ON;
+
+    struct nk_buffer vbuf, ibuf, cmds;
+    nk_buffer_init_default(&vbuf);
+    nk_buffer_init_default(&ibuf);
+    nk_buffer_init_default(&cmds);
+    nk_convert(ctx, &cmds, &vbuf, &ibuf, &config);
+
+    const struct nk_draw_command *cmd;
+    UIVertex *all_verts = (UIVertex *)nk_buffer_memory(&vbuf);
+    U32 num_vertices = vbuf.needed / sizeof(UIVertex);
+    U16 *all_indices = (U16 *)nk_buffer_memory(&ibuf);
+    U32 offset_idx = 0;
+
+    nk_draw_foreach(cmd, ctx, &cmds)
+    {
+      if (!cmd->elem_count)
+        continue;
+      PushDrawUICommand(&out_output->render_group, cmd->texture.id,
+                        num_vertices, all_verts, cmd->elem_count,
+                        all_indices + offset_idx);
+      offset_idx += cmd->elem_count;
+    }
+
+    nk_buffer_free(&vbuf);
+    nk_buffer_free(&ibuf);
+    nk_buffer_free(&cmds);
+    nk_clear(ctx);
+  }
+#endif
 }
