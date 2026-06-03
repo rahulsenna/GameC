@@ -2,6 +2,7 @@
 using namespace metal;
 
 #define DEBUG_CSM 0
+#define SHADOW_MAP_RES 4096.0/4
 
 struct VertexIn
 {
@@ -341,7 +342,7 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
         {
           if (x == 0 && y == 0)
             continue; // Already sampled center
-          float2 offset = float2(x, y) / float2(4096.0, 4096.0);
+          float2 offset = float2(x, y) / float2(SHADOW_MAP_RES, SHADOW_MAP_RES);
           shadow +=
               shadow_map.sample_compare(shadowSampler, proj_coords.xy + offset,
                                         cascade_idx, current_depth - bias);

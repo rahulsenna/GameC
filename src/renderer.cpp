@@ -252,8 +252,8 @@ extern "C" void Renderer_Init(void *device, void *metal_layer)
   depthDesc->release();
 
   MTL::TextureDescriptor *shadowDesc =
-      MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatDepth32Float,
-                                                  4096, 4096, false);
+      MTL::TextureDescriptor::texture2DDescriptor(
+          MTL::PixelFormatDepth32Float, SHADOW_MAP_RES, SHADOW_MAP_RES, false);
   shadowDesc->setTextureType(MTL::TextureType2DArray);
   shadowDesc->setArrayLength(3);
   shadowDesc->setUsage(MTL::TextureUsageRenderTarget |

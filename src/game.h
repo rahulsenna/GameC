@@ -54,6 +54,7 @@ inline GpuPtr gpuMalloc(GpuAllocator *allocator, U64 size)
 }
 
 #define MAX_BONES 128
+#define SHADOW_MAP_RES 4096/4
 
 struct Vertex
 {

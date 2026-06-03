@@ -770,7 +770,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
   base_uniforms.camera_front = front;
   base_uniforms.ambient_intensity = 0.2f;
 
-  float cascade_ends[4] = {0.1f, 15.0f, 45.0f, 120.0f};
+  float cascade_ends[4] = {0.1f, 7.5f, 30.0f, 120.0f};
   base_uniforms.cascade_splits = {cascade_ends[1], cascade_ends[2],
                                   cascade_ends[3], 0.0f};
 
@@ -821,7 +821,7 @@ extern "C" void GameUpdateAndRender(Arena *arena, GameInput *input, float dt,
         math_make_look_at(light_pos, frustum_center, Vec3{0, 1, 0});
 
     // Texel snapping to fix shimmering
-    float shadow_map_res = 4096.0f;
+    float shadow_map_res = (float)SHADOW_MAP_RES;
     float texel_size = (radius * 2.0f) / shadow_map_res;
 
     Vec4 center_ls = light_view * Vec4{frustum_center.x, frustum_center.y,
