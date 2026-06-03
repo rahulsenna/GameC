@@ -7,7 +7,8 @@ mkdir -p build
 build_shaders() {
     echo "Compiling Shaders..."
     xcrun -sdk macosx metal -c src/shaders.metal -o build/shaders.air
-    xcrun -sdk macosx metallib build/shaders.air -o build/shaders.metallib
+    xcrun -sdk macosx metallib build/shaders.air -o build/shaders.metallib.tmp
+    mv build/shaders.metallib.tmp build/shaders.metallib
 }
 
 build_asset_builder() {
