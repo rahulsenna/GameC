@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
 
+#define DEBUG_CSM 0
+
 struct VertexIn
 {
   float3 position;
@@ -221,6 +223,23 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
 
   float3 albedo = pow(albedo_rgba.rgb, float3(2.2));
 
+  float view_z =
+      dot(in.world_position - uniforms.camera_pos, uniforms.camera_front);
+  uint cascade_idx = 0;
+  if (view_z > uniforms.cascade_splits.x)
+    cascade_idx = 1;
+  if (view_z > uniforms.cascade_splits.y)
+    cascade_idx = 2;
+
+#if DEBUG_CSM
+  if (cascade_idx == 0)
+    albedo = float3(1.0, 0.0, 0.0);
+  else if (cascade_idx == 1)
+    albedo = float3(0.0, 1.0, 0.0);
+  else if (cascade_idx == 2)
+    albedo = float3(0.0, 0.0, 1.0);
+#endif
+
   float metallic = 0.0;
   if (uniforms.metallic_tex != 0)
   {
@@ -284,14 +303,6 @@ fragment float4 fragment_main(RasterizerData in [[stage_in]],
   F0 = mix(F0, albedo, metallic);
 
   // Shadow mapping calculation
-  float view_z =
-      dot(in.world_position - uniforms.camera_pos, uniforms.camera_front);
-  uint cascade_idx = 0;
-  if (view_z > uniforms.cascade_splits.x)
-    cascade_idx = 1;
-  if (view_z > uniforms.cascade_splits.y)
-    cascade_idx = 2;
-
   float4 frag_pos_light_space =
       uniforms.light_vp_matrices[cascade_idx] * float4(in.world_position, 1.0);
   float3 proj_coords = frag_pos_light_space.xyz / frag_pos_light_space.w;
