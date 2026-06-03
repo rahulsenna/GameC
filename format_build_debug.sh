@@ -6,7 +6,7 @@ clang-format -i src/*.h src/*.cpp src/*.mm src/*.metal
 /usr/bin/log stream \
     --level debug \
     --predicate 'process == "engine" AND senderImagePath contains "Metal" AND NOT(eventMessage CONTAINS "DescriptorHeapNewHandle") AND NOT(eventMessage CONTAINS "MemoryUsed")' \
-    | tee build/metal.log &
+    &
 LOG_PID=$!
 
 echo "$LOG_PID"
